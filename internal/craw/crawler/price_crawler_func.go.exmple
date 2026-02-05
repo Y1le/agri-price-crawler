@@ -1,0 +1,9 @@
+import (
+	"context"
+	"time"
+)
+
+func (c *PriceCrawler) fetchPage(ctx context.Context, date time.Time, pageNum int) (*APIResponse, error) {
+	// ... existing code ...
+	return &apiResp, nil
+}
