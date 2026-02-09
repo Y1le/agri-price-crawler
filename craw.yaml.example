@@ -85,3 +85,10 @@ cron:
 crawler:
   deviceID: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   secret: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+email:
+  host: smtp.qq.com
+  port: 465
+  username: your_email@qq.com
+  password: vmmpotyiqjlbdeib   # QQ 邮箱授权码
+  from: "AgriPrice <your_email@qq.com>"

@@ -21,6 +21,7 @@ type Options struct {
 	JwtOptions              *genericoptions.JwtOptions             `json:"jwt"      mapstructure:"jwt"`
 	Log                     *log.Options                           `json:"log"      mapstructure:"log"`
 	FeatureOptions          *genericoptions.FeatureOptions         `json:"feature"  mapstructure:"feature"`
+	EmailOptions            *genericoptions.EmailOptions           `json:"email"      mapstructure:"email"`
 }
 
 // NewOptions creates a new Options object with default parameters.
@@ -31,6 +32,7 @@ func NewOptions() *Options {
 		CronOptions:    genericoptions.NewCronOptions(),
 		CrawlerOptions: genericoptions.NewCrawlerOptions(),
 		Log:            log.NewOptions(),
+		EmailOptions:   genericoptions.NewEmailOptions(),
 	}
 
 	return &o
@@ -42,6 +44,8 @@ func (o *Options) Flags() (fss cliflag.NamedFlagSets) {
 	o.RedisOptions.AddFlags(fss.FlagSet("redis"))
 	o.CronOptions.AddFlags(fss.FlagSet("cron"))
 	o.Log.AddFlags(fss.FlagSet("logs"))
+	o.CrawlerOptions.AddFlags(fss.FlagSet("crawler"))
+	o.EmailOptions.AddFlags(fss.FlagSet("email"))
 
 	return fss
 }

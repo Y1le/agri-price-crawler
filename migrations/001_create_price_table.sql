@@ -31,3 +31,39 @@ CREATE TABLE IF NOT EXISTS `prices` (
   KEY `idx_area` (`province_id`, `city_id`, `area_id`),
   KEY `idx_create_time` (`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='农产品价格数据表';
+
+DROP TABLE IF EXISTS `subscribe`;
+
+CREATE TABLE `subscribe` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `instanceID` VARCHAR(32) DEFAULT NULL,
+  `name` varchar(45) NOT NULL,
+  `email` VARCHAR(256) NOT NULL,                  
+  `city` VARCHAR(256) NOT NULL,
+  `extendShadow` longtext DEFAULT NULL,
+  `createdAt` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `instanceID_UNIQUE` (`instanceID`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订阅表';
+
+DROP TABLE IF EXISTS `user`;
+
+CREATE TABLE `user` (
+  `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `instanceID` varchar(32) DEFAULT NULL,
+  `name` varchar(45) NOT NULL,
+  `status` int(1) DEFAULT 1 COMMENT '1:可用，0:不可用',
+  `nickname` varchar(30) NOT NULL,
+  `password` varchar(255) NOT NULL,
+  `email` varchar(256) NOT NULL,
+  `phone` varchar(20) DEFAULT NULL,
+  `isAdmin` tinyint(1) UNSIGNED NOT NULL DEFAULT 0 COMMENT '1: administrator\\\\n0: non-administrator',
+  `extendShadow` longtext DEFAULT NULL,
+  `loginedAt` timestamp NULL DEFAULT NULL COMMENT 'last login time',
+  `createdAt` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_name` (`name`),
+  UNIQUE KEY `instanceID_UNIQUE` (`instanceID`)
+) ENGINE=InnoDB AUTO_INCREMENT=38 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';

@@ -20,8 +20,15 @@ type dataStore struct {
 	// db *gorm.DB
 }
 
-func (ds *dataStore) Prices() store.PriceStorage {
-	return newPrices(ds.db)
+func (ds *dataStore) HNPrices() store.HNPriceStore {
+	return newHNPrices(ds.db)
+}
+
+func (ds *dataStore) Users() store.UserStore {
+	return newUsers(ds.db)
+}
+func (ds *dataStore) Subscribes() store.SubscribeStore {
+	return newSubscribes(ds.db)
 }
 
 func (ds *dataStore) Close() error {

@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"github.com/marmotedu/component-base/pkg/validation"
+	"github.com/marmotedu/component-base/pkg/validation/field"
 	"gorm.io/gorm"
 )
 
@@ -44,4 +46,11 @@ func (p *PriceList) TableName() string {
 func (p *Price) AfterCreate(tx *gorm.DB) error {
 	// TODO:
 	return nil
+}
+
+// Validate validates that a price object is valid.
+func (p *Price) Validate() field.ErrorList {
+	val := validation.NewValidator(p)
+
+	return val.Validate()
 }

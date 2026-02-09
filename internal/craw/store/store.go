@@ -2,9 +2,11 @@ package store
 
 var client Factory
 
-// PriceDataStorage defines the PriceData storage interface.
+// PriceDataStore defines the PriceData Store interface.
 type Factory interface {
-	Prices() PriceStorage
+	HNPrices() HNPriceStore
+	Users() UserStore
+	Subscribes() SubscribeStore
 	Close() error
 }
 

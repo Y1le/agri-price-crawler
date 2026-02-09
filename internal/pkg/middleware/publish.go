@@ -37,7 +37,7 @@ func Publish() gin.HandlerFunc {
 // func notify(ctx context.Context, method string, command load.NotificationCommand) {
 // switch method {
 // case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
-// 	redisStore := &storage.RedisCluster{}
+// 	redisStore := &Store.RedisCluster{}
 // 	message, _ := json.Marshal(load.Notification{Command: command})
 
 // 	if err := redisStore.Publish(load.RedisPubSubChannel, string(message)); err != nil {

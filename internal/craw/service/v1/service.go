@@ -4,6 +4,8 @@ import "github.com/Y1le/agri-price-crawler/internal/craw/store"
 
 type Service interface {
 	HNPrices() HNPriceSrv
+	Users() UserSrv
+	Subscribes() SubscribeSrv
 }
 
 type service struct {
@@ -18,4 +20,12 @@ func NewService(store store.Factory) Service {
 }
 func (s *service) HNPrices() HNPriceSrv {
 	return newHNPrice(s)
+}
+
+func (s *service) Users() UserSrv {
+	return newUser(s)
+}
+
+func (s *service) Subscribes() SubscribeSrv {
+	return newSubscribe(s)
 }

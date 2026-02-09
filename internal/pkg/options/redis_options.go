@@ -47,7 +47,7 @@ func (o *RedisOptions) Validate() []error {
 	return errs
 }
 
-// AddFlags adds flags related to redis storage for a specific APIServer to the specified FlagSet.
+// AddFlags adds flags related to redis Store for a specific APIServer to the specified FlagSet.
 func (o *RedisOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.Host, "redis.host", o.Host, "Hostname of your Redis server.")
 	fs.IntVar(&o.Port, "redis.port", o.Port, "The port the Redis server is listening on.")

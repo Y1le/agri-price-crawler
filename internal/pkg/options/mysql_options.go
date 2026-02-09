@@ -42,7 +42,7 @@ func (o *MySQLOptions) Validate() []error {
 	return errs
 }
 
-// AddFlags adds flags related to mysql storage for a specific APIServer to the specified FlagSet.
+// AddFlags adds flags related to mysql Store for a specific APIServer to the specified FlagSet.
 func (o *MySQLOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.Host, "mysql.host", o.Host, ""+
 		"MySQL service host address. If left blank, the following related mysql options will be ignored.")

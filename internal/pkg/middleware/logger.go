@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattn/go-isatty"
 
-	"github.com/marmotedu/iam/pkg/log"
+	"github.com/Y1le/agri-price-crawler/pkg/log"
 )
 
 // defaultLogFormatter is the default log format function Logger middleware uses.

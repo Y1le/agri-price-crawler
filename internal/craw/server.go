@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Y1le/agri-price-crawler/internal/craw/config"
+	emailer "github.com/Y1le/agri-price-crawler/internal/craw/emailer"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store/mysql"
 	genericoptions "github.com/Y1le/agri-price-crawler/internal/pkg/options"
@@ -11,7 +12,7 @@ import (
 	"github.com/Y1le/agri-price-crawler/pkg/log"
 	shutdown "github.com/Y1le/agri-price-crawler/pkg/shutdown"
 	"github.com/Y1le/agri-price-crawler/pkg/shutdown/shutdownmanagers/posixsignal"
-	"github.com/marmotedu/iam/pkg/storage"
+	"github.com/Y1le/agri-price-crawler/pkg/storage"
 )
 
 type crawServer struct {
@@ -21,6 +22,8 @@ type crawServer struct {
 	cronOptions       *genericoptions.CronOptions
 	crawlerOptions    *genericoptions.CrawlerOptions
 	genericCrawServer *genericcrawserver.GenericCrawServer
+
+	emailOptions *genericoptions.EmailOptions
 }
 
 type preparedCrawServer struct {
@@ -48,6 +51,7 @@ func createCRAWServer(cfg *config.Config) (*crawServer, error) {
 		cronOptions:       cfg.CronOptions,
 		crawlerOptions:    cfg.CrawlerOptions,
 		genericCrawServer: genericServer,
+		emailOptions:      cfg.EmailOptions,
 	}
 
 	return server, nil
@@ -64,6 +68,7 @@ func (s *crawServer) PrepareRun() preparedCrawServer {
 
 	s.initRedisStore()
 	s.initCronTask()
+	s.initEmailer()
 	s.gs.AddShutdownCallback(shutdown.ShutdownFunc(func(string) error {
 		mysqlStore, _ := mysql.GetMySQLFactoryOr(nil)
 		if mysqlStore != nil {
@@ -144,4 +149,15 @@ func (s *crawServer) initRedisStore() {
 
 	// try to connect to redis
 	go storage.ConnectToRedis(ctx, config)
+}
+
+func (s *crawServer) initEmailer() {
+	emailer.Instance = &emailer.SMTPMailer{
+		Host:     s.emailOptions.Username,
+		Port:     s.emailOptions.Port,
+		Username: s.emailOptions.Username,
+		Password: s.emailOptions.Password,
+		From:     s.emailOptions.From,
+	}
+
 }

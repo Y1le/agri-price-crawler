@@ -10,7 +10,7 @@ import (
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
 	v1 "github.com/Y1le/agri-price-crawler/pkg/api/v1"
 	"github.com/Y1le/agri-price-crawler/pkg/log"
-	utils "github.com/Y1le/agri-price-crawler/pkg/utils"
+	utils "github.com/Y1le/agri-price-crawler/pkg/util"
 	"github.com/google/uuid"
 )
 
@@ -94,7 +94,7 @@ func (c *PriceCrawler) saveData(ctx context.Context, items []PriceItem) error {
 		return fmt.Errorf("parse price items failed: %w", err)
 	}
 	log.Infof("Saving %d price records", len(prices))
-	return store.Client().Prices().Save(ctx, prices)
+	return store.Client().HNPrices().Save(ctx, prices)
 }
 
 func (c *PriceCrawler) generateNonce(ts int64) string {

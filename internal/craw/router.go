@@ -1,6 +1,10 @@
 package craw
 
 import (
+	"github.com/Y1le/agri-price-crawler/internal/craw/controller/hnprice"
+	"github.com/Y1le/agri-price-crawler/internal/craw/controller/subscribe"
+	"github.com/Y1le/agri-price-crawler/internal/craw/controller/user"
+	"github.com/Y1le/agri-price-crawler/internal/craw/store/mysql"
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,7 +17,6 @@ func installMiddleware(g *gin.Engine) {
 }
 
 func installController(g *gin.Engine) *gin.Engine {
-	g.StaticFile("/favicon.ico", "./static/favicon.ico")
 	// Middlewares.
 	// jwtStrategy, _ := newJWTAuth().(auth.JWTStrategy)
 	// g.POST("/login", jwtStrategy.LoginHandler)
@@ -27,51 +30,42 @@ func installController(g *gin.Engine) *gin.Engine {
 	// })
 
 	// v1 handlers, requiring authentication
-	// storeIns, _ := mysql.GetMySQLFactoryOr(nil)
-	// v1 := g.Group("/v1")
-	// {
+	storeIns, _ := mysql.GetMySQLFactoryOr(nil)
+	v1 := g.Group("/v1")
+	{
 
-	// user RESTful resource
-	// userv1 := v1.Group("/users")
-	// {
-	// 	userController := user.NewUserController(storeIns)
+		// user RESTful resource
+		hnpricev1 := v1.Group("/prices")
+		{
+			priceController := hnprice.NewHNPriceController(storeIns)
 
-	// 	userv1.POST("", userController.Create)
-	// 	userv1.Use(auto.AuthFunc(), middleware.Validation())
-	// 	// v1.PUT("/find_password", userController.FindPassword)
-	// 	userv1.DELETE("", userController.DeleteCollection) // admin api
-	// 	userv1.DELETE(":name", userController.Delete)      // admin api
-	// 	userv1.PUT(":name/change-password", userController.ChangePassword)
-	// 	userv1.PUT(":name", userController.Update)
-	// 	userv1.GET("", userController.List)
-	// 	userv1.GET(":name", userController.Get) // admin api
-	// }
+			hnpricev1.GET("", priceController.List)
 
-	// v1.Use(auto.AuthFunc())
+		}
 
-	// policy RESTful resource
-	// policyv1 := v1.Group("/policies", middleware.Publish())
-	// {
-	// 	policyController := policy.NewPolicyController(storeIns)
+		// user RESTful resource
+		userv1 := v1.Group("/users")
+		{
+			userController := user.NewUserController(storeIns)
 
-	// 	policyv1.POST("", policyController.Create)
-	// 	policyv1.DELETE("", policyController.DeleteCollection)
-	// 	policyv1.DELETE(":name", policyController.Delete)
-	// 	policyv1.GET("", policyController.List)
-	// }
+			userv1.POST("", userController.Create)
+			// userv1.Use(auto.AuthFunc(), middleware.Validation())
+			userv1.DELETE("", userController.DeleteCollection) // admin api
+			userv1.DELETE(":name", userController.Delete)      // admin api
+			userv1.PUT(":name/change-password", userController.ChangePassword)
+			userv1.PUT(":name", userController.Update)
+			userv1.GET("", userController.List)
+			userv1.GET(":name", userController.Get) // admin api
+		}
 
-	// // secret RESTful resource
-	// secretv1 := v1.Group("/secrets", middleware.Publish())
-	// {
-	// 	secretController := secret.NewSecretController(storeIns)
+		subscribev1 := v1.Group("/subscribes")
+		{
+			subscribeController := subscribe.NewSubscribeController(storeIns)
 
-	// 	secretv1.POST("", secretController.Create)
-	// 	secretv1.DELETE(":name", secretController.Delete)
-	// 	secretv1.PUT(":name", secretController.Update)
-	// 	secretv1.GET("", secretController.List)
-	// 	secretv1.GET(":name", secretController.Get)
-	// }
-	// }
+			subscribev1.POST("", subscribeController.Create)
+			subscribev1.DELETE(":email", subscribeController.Delete)
+		}
+	}
 
 	return g
 }
