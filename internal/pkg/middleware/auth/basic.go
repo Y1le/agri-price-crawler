@@ -34,7 +34,7 @@ func (b BasicStrategy) AuthFunc() gin.HandlerFunc {
 		if len(auth) != 2 || auth[0] != "Basic" {
 			core.WriteResponse(
 				c,
-				errors.WithCode(code.ErrSignatureInvalid, "Authorization header format is wrong."),
+				errors.Errorf("%d: %s", code.ErrSignatureInvalid, "Authorization header format is wrong."),
 				nil,
 			)
 			c.Abort()
@@ -48,7 +48,7 @@ func (b BasicStrategy) AuthFunc() gin.HandlerFunc {
 		if len(pair) != 2 || !b.compare(pair[0], pair[1]) {
 			core.WriteResponse(
 				c,
-				errors.WithCode(code.ErrSignatureInvalid, "Authorization header format is wrong."),
+				errors.Errorf("%d: %s", code.ErrSignatureInvalid, "Authorization header format is wrong."),
 				nil,
 			)
 			c.Abort()

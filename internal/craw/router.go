@@ -26,7 +26,7 @@ func installController(g *gin.Engine) *gin.Engine {
 
 	// auto := newAutoAuth()
 	// g.NoRoute(auto.AuthFunc(), func(c *gin.Context) {
-	// 	core.WriteResponse(c, errors.WithCode(code.ErrPageNotFound, "Page not found."), nil)
+	// 	core.WriteResponse(c, errors.Errorf("%d: %s", code.ErrPageNotFound, "Page not found."), nil)
 	// })
 
 	// v1 handlers, requiring authentication

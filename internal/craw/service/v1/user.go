@@ -36,14 +36,14 @@ func (u *userService) List(ctx context.Context, opts metav1.ListOptions) (*v1.Us
 
 func (u *userService) DeleteCollection(ctx context.Context, usernames []string, opts metav1.DeleteOptions) error {
 	if err := u.store.Users().DeleteCollection(ctx, usernames, opts); err != nil {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 	return nil
 }
 
 func (u *userService) Delete(ctx context.Context, username string, opts metav1.DeleteOptions) error {
 	if err := u.store.Users().Delete(ctx, username, opts); err != nil {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 	return nil
 }
@@ -58,14 +58,14 @@ func (u *userService) Get(ctx context.Context, username string, opts metav1.GetO
 
 func (u *userService) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions) error {
 	if err := u.store.Users().Update(ctx, user, opts); err != nil {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 	return nil
 }
 
 func (u *userService) ChangePassword(ctx context.Context, user *v1.User) error {
 	if err := u.store.Users().Update(ctx, user, metav1.UpdateOptions{}); err != nil {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 
 	return nil
@@ -73,7 +73,7 @@ func (u *userService) ChangePassword(ctx context.Context, user *v1.User) error {
 
 func (u *userService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error {
 	if err := u.store.Users().Create(ctx, user, opts); err != nil {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 	return nil
 }

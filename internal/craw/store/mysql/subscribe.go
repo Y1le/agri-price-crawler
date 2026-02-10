@@ -28,7 +28,7 @@ func (s *Subscribes) Delete(ctx context.Context, email string, opts metav1.Delet
 	}
 	err := s.db.Where("email = ?", email).Delete(&v1.Subscribe{}).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 	return nil
 }

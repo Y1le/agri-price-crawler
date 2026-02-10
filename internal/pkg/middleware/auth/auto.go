@@ -39,7 +39,7 @@ func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 		if len(authHeader) != authHeaderCount {
 			core.WriteResponse(
 				c,
-				errors.WithCode(code.ErrInvalidAuthHeader, "Authorization header format is wrong."),
+				errors.Errorf("%d: %s", code.ErrInvalidAuthHeader, "Authorization header format is wrong."),
 				nil,
 			)
 			c.Abort()
@@ -54,7 +54,7 @@ func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 			operator.SetStrategy(a.jwt)
 			// a.JWT.MiddlewareFunc()(c)
 		default:
-			core.WriteResponse(c, errors.WithCode(code.ErrSignatureInvalid, "unrecognized Authorization header."), nil)
+			core.WriteResponse(c, errors.Errorf("%d: %s", code.ErrSignatureInvalid, "unrecognized Authorization header."), nil)
 			c.Abort()
 
 			return

@@ -35,7 +35,7 @@ func (u *users) Delete(ctx context.Context, username string, opts metav1.DeleteO
 
 	err := u.db.Where("name = ?", username).Delete(&v1.User{}).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 	return nil
 }
@@ -52,9 +52,9 @@ func (u *users) Get(ctx context.Context, username string, opts metav1.GetOptions
 	err := u.db.Where("name = ?", username).First(&user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.WithCode(code.ErrUserNotFound, err.Error())
+			return nil, errors.Errorf("%d: %s", code.ErrUserNotFound, err.Error())
 		}
-		return nil, errors.WithCode(code.ErrDatabase, err.Error())
+		return nil, errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 
 	return user, nil

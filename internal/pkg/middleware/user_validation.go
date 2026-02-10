@@ -17,7 +17,7 @@ func Validation() gin.HandlerFunc {
 			switch c.FullPath() {
 			case "/v1/users":
 				if c.Request.Method != http.MethodPost {
-					core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, ""), nil)
+					core.WriteResponse(c, errors.Errorf("%d: %s", code.ErrPermissionDenied, ""), nil)
 					c.Abort()
 
 					return
@@ -26,7 +26,7 @@ func Validation() gin.HandlerFunc {
 				username := c.GetString("username")
 				if c.Request.Method == http.MethodDelete ||
 					(c.Request.Method != http.MethodDelete && username != c.Param("name")) {
-					core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, ""), nil)
+					core.WriteResponse(c, errors.Errorf("%d: %s", code.ErrPermissionDenied, ""), nil)
 					c.Abort()
 
 					return
@@ -45,11 +45,11 @@ func isAdmin(c *gin.Context) error {
 	// username := c.GetString(UsernameKey)
 	// user, err := store.Client().Users().Get(c, username, metav1.GetOptions{})
 	// if err != nil {
-	// 	return errors.WithCode(code.ErrDatabase, err.Error())
+	// 	return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	// }
 
 	// if user.IsAdmin != 1 {
-	// 	return errors.WithCode(code.ErrPermissionDenied, "user %s is not a administrator", username)
+	// 	return errors.Errorf("%d: %s", code.ErrPermissionDenied, "user %s is not a administrator", username)
 	// }
 
 	return nil

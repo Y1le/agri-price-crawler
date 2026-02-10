@@ -28,14 +28,14 @@ func newSubscribe(srv *service) *subscribeService {
 
 func (s *subscribeService) Create(ctx context.Context, subscribe *v1.Subscribe, opts metav1.CreateOptions) error {
 	if err := s.store.Subscribes().Create(ctx, subscribe, opts); err != nil {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 	return nil
 }
 
 func (s *subscribeService) Delete(ctx context.Context, email string, opts metav1.DeleteOptions) error {
 	if err := s.store.Subscribes().Delete(ctx, email, opts); err != nil {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}
 	return nil
 }
