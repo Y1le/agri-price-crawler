@@ -23,8 +23,6 @@ jobs:
       uses: actions/checkout@v2
 
     - name: Test
-<<<<<<< HEAD
       run: make test
-=======
-      run: make test
->>>>>>> d2a1547c9befe541c49102dc8f77ab1ecdc9dd3d
+
+
