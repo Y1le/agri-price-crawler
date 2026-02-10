@@ -1,6 +1,5 @@
 *.pem
 *.yaml
-/internal/craw/crawler/price_crawler_func.go
 ### Go ###
 # Binaries for programs and plugins
 *.exe
