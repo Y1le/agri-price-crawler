@@ -6,6 +6,12 @@ type Email struct {
 	Text    string
 }
 
+type Recipient struct {
+	Email string
+	Name  string
+}
+
 type Mailer interface {
 	Send(email Email) error
+	SendBulkEmails(recipients []Recipient, subject, htmlBody string) error
 }
