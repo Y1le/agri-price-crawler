@@ -28,7 +28,7 @@ func (p *prices) List(ctx context.Context, opts metav1.ListOptions) (*v1.PriceLi
 	// CateName
 	// BreedName
 	selector, _ := fields.ParseSelector(opts.FieldSelector)
-	db := p.db.Model(&v1.User{})
+	db := p.db.Model(&v1.Price{})
 	if cateName, ok := selector.RequiresExactMatch("cate_name"); ok {
 		db = db.Where("cate_name = ?", cateName)
 	}
