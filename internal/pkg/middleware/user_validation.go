@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
@@ -50,7 +51,7 @@ func isAdmin(c *gin.Context) error {
 	}
 
 	if user.IsAdmin != 1 {
-		return errors.Errorf("%d: %s", code.ErrPermissionDenied, "user %s is not a administrator", username)
+		return errors.Errorf("%d: %s", code.ErrPermissionDenied, fmt.Sprintf("user %s is not a administrator", username))
 	}
 
 	return nil
