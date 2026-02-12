@@ -30,7 +30,10 @@ func installController(g *gin.Engine) *gin.Engine {
 	// })
 
 	// v1 handlers, requiring authentication
-	storeIns, _ := mysql.GetMySQLFactoryOr(nil)
+	storeIns, err := mysql.GetMySQLFactoryOr(nil)
+	if err != nil {
+		panic(err)
+	}
 	v1 := g.Group("/v1")
 	{
 

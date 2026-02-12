@@ -30,6 +30,13 @@ type preparedCrawServer struct {
 	*crawServer
 }
 
+// ExtraConfig defines extra configuration for the craw-server.
+type ExtraConfig struct {
+	ServerCert   genericoptions.GeneratableKeyCert
+	mysqlOptions *genericoptions.MySQLOptions
+	// etcdOptions      *genericoptions.EtcdOptions
+}
+
 func createCRAWServer(cfg *config.Config) (*crawServer, error) {
 	gs := shutdown.New()
 	gs.AddShutdownManager(posixsignal.NewPosixSignalManager())
@@ -39,11 +46,19 @@ func createCRAWServer(cfg *config.Config) (*crawServer, error) {
 		return nil, err
 	}
 
-	genericServer, err := genericConfig.Complete().New()
+	extraConfig, err := buildExtraConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 
+	genericServer, err := genericConfig.Complete().New()
+	if err != nil {
+		return nil, err
+	}
+	err = extraConfig.complete().New()
+	if err != nil {
+		return nil, err
+	}
 	server := &crawServer{
 		gs:                gs,
 		mysqlOptions:      cfg.MySQLOptions,
@@ -113,15 +128,13 @@ func buildGenericConfig(cfg *config.Config) (genericConfig *genericcrawserver.Co
 	return
 }
 
-// func buildExtraConfig(cfg *config.Config) (*ExtraConfig, error) {
-// 	return &ExtraConfig{
-// 		Addr: fmt.Sprintf("%s:%d", cfg.GRPCOptions.BindAddress, cfg.GRPCOptions.BindPort),
-// 		MaxMsgSize:   cfg.GRPCOptions.MaxMsgSize,
-// 		ServerCert:   cfg.SecureServing.ServerCert,
-// 		mysqlOptions: cfg.MySQLOptions,
-// 		// etcdOptions:      cfg.EtcdOptions,
-// 	}, nil
-// }
+func buildExtraConfig(cfg *config.Config) (*ExtraConfig, error) {
+	return &ExtraConfig{
+		ServerCert:   cfg.SecureServing.ServerCert,
+		mysqlOptions: cfg.MySQLOptions,
+		// etcdOptions:      cfg.EtcdOptions,
+	}, nil
+}
 
 func (s *crawServer) initRedisStore() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -160,4 +173,23 @@ func (s *crawServer) initEmailer() {
 		From:     s.emailOptions.From,
 	}
 
+}
+
+type completedExtraConfig struct {
+	*ExtraConfig
+}
+
+// Complete fills in any fields not set that are required to have valid data and can be derived from other fields.
+func (c *ExtraConfig) complete() *completedExtraConfig {
+	return &completedExtraConfig{c}
+}
+
+// New create a grpcAPIServer instance.
+func (c *completedExtraConfig) New() error {
+
+	storeIns, _ := mysql.GetMySQLFactoryOr(c.mysqlOptions)
+	// storeIns, _ := etcd.GetEtcdFactoryOr(c.etcdOptions, nil)
+	store.SetClient(storeIns)
+
+	return nil
 }

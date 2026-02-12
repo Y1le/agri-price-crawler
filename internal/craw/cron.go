@@ -36,9 +36,6 @@ func (s *crawServer) initCronTask() {
 
 	crawler := craw.NewPriceCrawler(crawlerConfig, nil)
 	mysqlStore, _ := mysql.GetMySQLFactoryOr(nil)
-	if mysqlStore != nil {
-		_ = mysqlStore.Close()
-	}
 
 	dailySend := task.NewPriceSendTask(mysqlStore)
 	// if crawler == nil {

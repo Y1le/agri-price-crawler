@@ -27,6 +27,7 @@ func (u *UserController) Create(c *gin.Context) {
 	}
 
 	if errs := r.Validate(); len(errs) != 0 {
+		log.L(c).Debugf("bind json failed: %v", errs)
 		core.WriteResponse(c, errors.Errorf("%d, %s", code.ErrValidation, errs.ToAggregate().Error()), nil)
 
 		return

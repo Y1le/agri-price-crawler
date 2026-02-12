@@ -29,7 +29,7 @@ type User struct {
 	Password string `json:"password,omitempty" gorm:"column:password" validate:"required"`
 
 	// Required: true
-	Email string `json:"email" gorm:"column:email" validate:"required,email,min=1,max=100"`
+	Email string `json:"email,omitempty" gorm:"column:email" validate:"required,email,min=1,max=100"`
 
 	Phone string `json:"phone" gorm:"column:phone" validate:"omitempty"`
 
