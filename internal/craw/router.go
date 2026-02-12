@@ -5,7 +5,12 @@ import (
 	"github.com/Y1le/agri-price-crawler/internal/craw/controller/subscribe"
 	"github.com/Y1le/agri-price-crawler/internal/craw/controller/user"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store/mysql"
+	"github.com/Y1le/agri-price-crawler/internal/pkg/code"
+	"github.com/Y1le/agri-price-crawler/internal/pkg/middleware"
+	"github.com/Y1le/agri-price-crawler/internal/pkg/middleware/auth"
 	"github.com/gin-gonic/gin"
+	"github.com/marmotedu/component-base/pkg/core"
+	"github.com/marmotedu/errors"
 )
 
 func initRouter(g *gin.Engine) {
@@ -17,17 +22,17 @@ func installMiddleware(g *gin.Engine) {
 }
 
 func installController(g *gin.Engine) *gin.Engine {
-	// Middlewares.
-	// jwtStrategy, _ := newJWTAuth().(auth.JWTStrategy)
-	// g.POST("/login", jwtStrategy.LoginHandler)
-	// g.POST("/logout", jwtStrategy.LogoutHandler)
+	// Middlewares
+	jwtStrategy, _ := newJWTAuth().(auth.JWTStrategy)
+	g.POST("/login", jwtStrategy.LoginHandler)
+	g.POST("/logout", jwtStrategy.LogoutHandler)
 	// // Refresh time can be longer than token timeout
-	// g.POST("/refresh", jwtStrategy.RefreshHandler)
+	g.POST("/refresh", jwtStrategy.RefreshHandler)
 
-	// auto := newAutoAuth()
-	// g.NoRoute(auto.AuthFunc(), func(c *gin.Context) {
-	// 	core.WriteResponse(c, errors.Errorf("%d: %s", code.ErrPageNotFound, "Page not found."), nil)
-	// })
+	auto := newAutoAuth()
+	g.NoRoute(auto.AuthFunc(), func(c *gin.Context) {
+		core.WriteResponse(c, errors.Errorf("%d: %s", code.ErrPageNotFound, "Page not found."), nil)
+	})
 
 	// v1 handlers, requiring authentication
 	storeIns, err := mysql.GetMySQLFactoryOr(nil)
@@ -52,7 +57,7 @@ func installController(g *gin.Engine) *gin.Engine {
 			userController := user.NewUserController(storeIns)
 
 			userv1.POST("", userController.Create)
-			// userv1.Use(auto.AuthFunc(), middleware.Validation())
+			userv1.Use(auto.AuthFunc(), middleware.Validation())
 			userv1.DELETE("", userController.DeleteCollection) // admin api
 			userv1.DELETE(":name", userController.Delete)      // admin api
 			userv1.PUT(":name/change-password", userController.ChangePassword)
@@ -65,6 +70,7 @@ func installController(g *gin.Engine) *gin.Engine {
 		{
 			subscribeController := subscribe.NewSubscribeController(storeIns)
 
+			subscribev1.Use(auto.AuthFunc(), middleware.Validation())
 			subscribev1.POST("", subscribeController.Create)
 			subscribev1.DELETE(":email", subscribeController.Delete)
 		}

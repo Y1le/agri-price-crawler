@@ -28,8 +28,8 @@ const (
 )
 
 type loginInfo struct {
-	Username string `form:"username" json:"username" binding:"required,username"`
-	Password string `form:"password" json:"password" binding:"required,password"`
+	Username string `form:"username" json:"username" binding:"required,min=2,max=30"`
+	Password string `form:"password" json:"password" binding:"required,min=6"`
 }
 
 func newBasicAuth() middleware.AuthStrategy {

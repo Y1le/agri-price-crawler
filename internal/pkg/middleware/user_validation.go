@@ -3,11 +3,12 @@ package middleware
 import (
 	"net/http"
 
+	"github.com/Y1le/agri-price-crawler/internal/craw/store"
+	"github.com/Y1le/agri-price-crawler/internal/pkg/code"
 	"github.com/gin-gonic/gin"
 	"github.com/marmotedu/component-base/pkg/core"
+	metav1 "github.com/marmotedu/component-base/pkg/meta/v1"
 	"github.com/marmotedu/errors"
-
-	"github.com/Y1le/agri-price-crawler/internal/pkg/code"
 )
 
 // Validation make sure users have the right resource permission and operation.
@@ -42,15 +43,15 @@ func Validation() gin.HandlerFunc {
 // isAdmin make sure the user is administrator.
 // It returns a `github.com/marmotedu/errors.withCode` error.
 func isAdmin(c *gin.Context) error {
-	// username := c.GetString(UsernameKey)
-	// user, err := store.Client().Users().Get(c, username, metav1.GetOptions{})
-	// if err != nil {
-	// 	return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
-	// }
+	username := c.GetString(UsernameKey)
+	user, err := store.Client().Users().Get(c, username, metav1.GetOptions{})
+	if err != nil {
+		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
+	}
 
-	// if user.IsAdmin != 1 {
-	// 	return errors.Errorf("%d: %s", code.ErrPermissionDenied, "user %s is not a administrator", username)
-	// }
+	if user.IsAdmin != 1 {
+		return errors.Errorf("%d: %s", code.ErrPermissionDenied, "user %s is not a administrator", username)
+	}
 
 	return nil
 }
