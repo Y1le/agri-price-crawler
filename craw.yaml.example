@@ -78,9 +78,10 @@ feature:
   profiling: true # 开启性能分析, 可以通过 <host>:<port>/debug/pprof/地址查看程序栈、线程等系统信息，默认值为 true
 
 cron:
+  enable-daily-craw-sender: true
   enable-daily-email-sender: true
   daily-email-time: "0 x * * *"
-  daily-craw-times:  "0 x * * *"
+  daily-craw-time: "0 x * * *"
 
 crawler:
   device-id: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

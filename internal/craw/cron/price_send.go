@@ -51,7 +51,7 @@ func (t *PriceSendTaskImpl) Run(ctx context.Context, targetDate string) error {
 	var r metav1.ListOptions
 	r.Offset = &offset
 	r.Limit = &limit
-	r.LabelSelector = fmt.Sprintf("created_at=%s", targetDate)
+	r.LabelSelector = fmt.Sprintf("createdAt=%s", targetDate)
 	prices, err := t.store.HNPrices().List(context.Background(), r)
 	if err != nil {
 		return fmt.Errorf("failed to get all prices: %w", err)

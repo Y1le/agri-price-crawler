@@ -150,7 +150,7 @@ type PriceItem struct {
 	SecondCateId      int64   `json:"secondCateId"`
 	CateId            int64   `json:"cateId"`
 	CateName          string  `json:"cateName"`
-	BreedId           int64   `json:"breedId"` // 注意是 breedId 不是 breedName
+	BreedId           int64   `json:"breedId"`
 	BreedName         string  `json:"breedName"`
 	MinPrice          float64 `json:"minPrice"`
 	MaxPrice          float64 `json:"maxPrice"`
@@ -163,7 +163,7 @@ type PriceItem struct {
 	ProvinceId        int32   `json:"provinceId"`
 	CityId            int32   `json:"cityId"`
 	AreaId            int32   `json:"areaId"`
-	CreateTime        int64   `json:"createTime"` // 时间戳（毫秒）
+	CreateAt          int64   `json:"createAt"` // 时间戳（毫秒）
 	StatisNum         int32   `json:"statisNum"`
 	SourseType        string  `json:"sourse_type"` // 注意是 sourse_type（小写）
 	Trend             int8    `json:"trend"`

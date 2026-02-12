@@ -8,8 +8,10 @@ import (
 	task "github.com/Y1le/agri-price-crawler/internal/craw/cron"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store/mysql"
 	"github.com/Y1le/agri-price-crawler/pkg/log"
+	"github.com/Y1le/agri-price-crawler/pkg/log/cronlog"
 	shutdown "github.com/Y1le/agri-price-crawler/pkg/shutdown"
 	"github.com/robfig/cron/v3"
+	"go.uber.org/zap"
 )
 
 func (s *crawServer) initCronTask() {
@@ -19,12 +21,6 @@ func (s *crawServer) initCronTask() {
 		cancel()
 		return nil
 	}))
-
-	if !s.cronOptions.EnableDailyEmailSender {
-		log.Info("Daily crawl task is disabled")
-		return
-	}
-
 	if s.crawlerOptions.DeviceID == "" || s.crawlerOptions.Secret == "" {
 		log.Fatal("DeviceID or Secret is empty")
 	}
@@ -47,44 +43,66 @@ func (s *crawServer) initCronTask() {
 	// } else {
 	// 	log.Infof("Daily crawl succeeded for %s", targerTime.Format("2006-01-02"))
 	// }
+	log.Debugf("Daily crawl time: %s", s.cronOptions.DailyCrawTime)
+	log.Debugf("Daily email time: %s", s.cronOptions.DailyEmailTime)
+
+	if !s.cronOptions.EnableDailyCrawSender && !s.cronOptions.EnableDailyEmailSender {
+		log.Info("All cron tasks disabled")
+		return
+	}
 	go func() {
-		c := cron.New()
-		targetDate := time.Now().AddDate(0, 0, -1) // 爬昨天
-		crawFunc := func() {
-			execCtx, execCancel := context.WithTimeout(ctx, 10*time.Minute)
-			defer execCancel()
+		logger, _ := zap.NewProduction()
+		defer logger.Sync()
 
-			if err := crawler.Run(execCtx, targetDate); err != nil {
-				log.Errorf("Daily crawl failed for %s: %v", targetDate.Format("2006-01-02"), err)
-			} else {
-				log.Infof("Daily crawl succeeded for %s", targetDate.Format("2006-01-02"))
+		cronLogger := cronlog.NewLogger(logger.Sugar())
+		c := cron.New(
+			cron.WithLogger(cronLogger),
+		)
+
+		// 爬虫任务
+		if s.cronOptions.EnableDailyCrawSender {
+			crawFunc := func() {
+				execCtx, execCancel := context.WithTimeout(ctx, 10*time.Minute)
+				defer execCancel()
+
+				targetDate := time.Now().AddDate(0, 0, -1)
+				if err := crawler.Run(execCtx, targetDate); err != nil {
+					log.Errorf("Daily crawl failed for %s: %v", targetDate.Format("2006-01-02"), err)
+				} else {
+					log.Infof("Daily crawl succeeded for %s", targetDate.Format("2006-01-02"))
+				}
 			}
-		}
 
-		if _, err := c.AddFunc(s.cronOptions.DailyCrawTime, crawFunc); err != nil {
-			log.Fatalf("Failed to add cron task: %v", err)
-		}
-
-		crawSendFunc := func() {
-			execCtx, execCancel := context.WithTimeout(ctx, 10*time.Minute)
-			defer execCancel()
-
-			if err := dailySend.Run(execCtx, targetDate.Format("2006-01-02")); err != nil {
-				log.Errorf("Daily send failed: %v", err)
-			} else {
-				log.Infof("Daily send succeeded")
+			if _, err := c.AddFunc(s.cronOptions.DailyCrawTime, crawFunc); err != nil {
+				log.Fatalf("Failed to add crawl cron task: %v", err)
 			}
-		}
 
-		if _, err := c.AddFunc(s.cronOptions.DailyEmailTime, crawSendFunc); err != nil {
-			log.Fatalf("Failed to add cron task: %v", err)
 		}
+		// 发送任务
+		if s.cronOptions.EnableDailyEmailSender {
+			crawSendFunc := func() {
+				execCtx, execCancel := context.WithTimeout(ctx, 10*time.Minute)
+				defer execCancel()
 
+				targetDateStr := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+				if err := dailySend.Run(execCtx, targetDateStr); err != nil {
+					log.Errorf("Daily send failed: %v", err)
+				} else {
+					log.Infof("Daily send succeeded")
+				}
+			}
+
+			if _, err := c.AddFunc(s.cronOptions.DailyEmailTime, crawSendFunc); err != nil {
+				log.Fatalf("Failed to add email cron task: %v", err)
+			}
+
+		}
 		c.Start()
-		log.Infof("Daily cron task started at %s", s.cronOptions.DailyEmailTime)
+		log.Infof("Daily cron tasks started: crawl=%s, email=%s",
+			s.cronOptions.DailyCrawTime, s.cronOptions.DailyEmailTime)
 
 		<-ctx.Done()
 		c.Stop()
-		log.Info("Daily cron task stopped")
+		log.Info("Daily cron tasks stopped")
 	}()
 }

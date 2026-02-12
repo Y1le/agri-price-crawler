@@ -166,7 +166,7 @@ func (s *crawServer) initRedisStore() {
 
 func (s *crawServer) initEmailer() {
 	emailer.Instance = &emailer.SMTPMailer{
-		Host:     s.emailOptions.Username,
+		Host:     s.emailOptions.Host,
 		Port:     s.emailOptions.Port,
 		Username: s.emailOptions.Username,
 		Password: s.emailOptions.Password,

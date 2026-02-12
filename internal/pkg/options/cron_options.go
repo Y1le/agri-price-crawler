@@ -4,6 +4,8 @@ import "github.com/spf13/pflag"
 
 // CronOptions defines the configuration for cron jobs.
 type CronOptions struct {
+	// EnableDailyCrawSender 启用每日爬取任务
+	EnableDailyCrawSender bool `json:"enableDailyCrawSender" mapstructure:"enable-daily-craw-sender"`
 	// EnableDailyEmailSender 启用每日邮件发送任务
 	EnableDailyEmailSender bool `json:"enableDailyEmailSender" mapstructure:"enable-daily-email-sender"`
 	// DailyEmailTime 每日发送时间（格式: HH:MM，24小时制）
@@ -16,7 +18,8 @@ type CronOptions struct {
 // NewCronOptions creates a new CronOptions with default values.
 func NewCronOptions() *CronOptions {
 	return &CronOptions{
-		EnableDailyEmailSender: true,        // 默认关闭，避免误发
+		EnableDailyCrawSender:  false,       // 默认关闭，避免误发
+		EnableDailyEmailSender: false,       // 默认关闭，避免误发
 		DailyEmailTime:         "0 7 * * *", // 默认早上7点
 		DailyCrawTime:          "0 4 * * *", // 默认凌晨4点
 	}
@@ -31,6 +34,8 @@ func (o *CronOptions) Validate() []error {
 
 // AddFlags adds flags for CronOptions to the specified FlagSet.
 func (o *CronOptions) AddFlags(fs *pflag.FlagSet) {
+	fs.BoolVar(&o.EnableDailyCrawSender, "cron.enable-daily-craw-sender", o.EnableDailyCrawSender,
+		"Enable the daily craw sender cron job.")
 	fs.BoolVar(&o.EnableDailyEmailSender, "cron.enable-daily-email-sender", o.EnableDailyEmailSender,
 		"Enable the daily email sender cron job.")
 	fs.StringVar(&o.DailyEmailTime, "cron.daily-email-time", o.DailyEmailTime,
