@@ -2,9 +2,12 @@ package mysql
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/Y1le/agri-price-crawler/internal/pkg/util/gormutil"
 	v1 "github.com/Y1le/agri-price-crawler/pkg/api/v1"
+	"github.com/Y1le/agri-price-crawler/pkg/log"
 	"github.com/marmotedu/component-base/pkg/fields"
 	metav1 "github.com/marmotedu/component-base/pkg/meta/v1"
 	"gorm.io/gorm"
@@ -29,12 +32,28 @@ func (p *prices) List(ctx context.Context, opts metav1.ListOptions) (*v1.PriceLi
 	// BreedName
 	selector, _ := fields.ParseSelector(opts.FieldSelector)
 	db := p.db.Model(&v1.Price{})
-	if cateName, ok := selector.RequiresExactMatch("cate_name"); ok {
-		db = db.Where("cate_name = ?", cateName)
+	if cateName, ok := selector.RequiresExactMatch("cateName"); ok {
+		db = db.Where("cateName = ?", cateName)
 	}
-	if breeName, ok := selector.RequiresExactMatch("bree_name"); ok {
-		db = db.Where("bree_name = ?", breeName)
+	if breeName, ok := selector.RequiresExactMatch("breeName"); ok {
+		db = db.Where("breeName = ?", breeName)
 	}
+	if createdAtStr, ok := selector.RequiresExactMatch("createdAt"); ok {
+		targetDate, err := time.Parse("2006-01-02", createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid date: %v", err)
+		}
+
+		start := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, time.UTC)
+		nextDay := start.Add(24 * time.Hour)
+
+		db = db.Where("createdAt >= ?", start).Where("createdAt < ?", nextDay)
+	}
+	if addressDetail, ok := selector.RequiresExactMatch("addressDetail"); ok {
+		db = db.Where("addressDetail LIKE ?", addressDetail+"%")
+	}
+	addressDetail, _ := selector.RequiresExactMatch("addressDetail")
+	log.Debugf("opts: %v", addressDetail)
 	d := db.Offset(ol.Offset).
 		Limit(ol.Limit).
 		Order("createdAt desc").

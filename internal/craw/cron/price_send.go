@@ -40,36 +40,40 @@ func (t *PriceSendTaskImpl) Run(ctx context.Context, targetDate string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get all subscribers: %w", err)
 	}
-	recipients := make([]mailer.Recipient, 0, len(subscribes))
+	recipients := make(map[string][]mailer.Recipient)
+	// recipients := make([]mailer.Recipient, 0, len(subscribes))
 	for _, subscribe := range subscribes {
-		recipients = append(recipients, mailer.Recipient{
+		recipients[subscribe.City] = append(recipients[subscribe.City], mailer.Recipient{
 			Email: subscribe.Email,
 			Name:  subscribe.Name,
 		})
 	}
-	offset, limit := int64(0), int64(10)
-	var r metav1.ListOptions
-	r.Offset = &offset
-	r.Limit = &limit
-	r.LabelSelector = fmt.Sprintf("createdAt=%s", targetDate)
-	prices, err := t.store.HNPrices().List(context.Background(), r)
-	if err != nil {
-		return fmt.Errorf("failed to get all prices: %w", err)
-	}
-	subject := "最新的农产品价格"
-	htmlBody := fmt.Sprintf(`
-		<html>
-			<body>
-				<h1>最新的农产品价格</h1>
-				<p>%s</p>
-			</body>
-		</html>
-	`, pricesToHtml(prices))
 
-	// 发送邮件
 	emailer := mailer.GetInstance()
-	if err := emailer.SendBulkEmails(recipients, subject, htmlBody); err != nil {
-		return fmt.Errorf("failed to send bulk emails: %w", err)
+	for city, recips := range recipients {
+		offset, limit := int64(0), int64(10)
+		var r metav1.ListOptions
+		r.Offset = &offset
+		r.Limit = &limit
+		r.FieldSelector = fmt.Sprintf("createdAt=%s,addressDetail=%s", targetDate, city)
+		prices, err := t.store.HNPrices().List(context.Background(), r)
+		if err != nil {
+			return fmt.Errorf("failed to get all prices: %w", err)
+		}
+		subject := fmt.Sprintf("最新的%s农产品价格", city)
+		htmlBody := fmt.Sprintf(`
+			<html>
+				<body>
+					<h1>最新的%s农产品价格</h1>
+					<p>%s</p>
+				</body>
+			</html>
+		`, city, pricesToHtml(prices))
+
+		// 发送邮件
+		if err := emailer.SendBulkEmails(recips, subject, htmlBody); err != nil {
+			return fmt.Errorf("failed to send bulk emails: %w", err)
+		}
 	}
 
 	return nil
@@ -78,7 +82,7 @@ func (t *PriceSendTaskImpl) Run(ctx context.Context, targetDate string) error {
 func pricesToHtml(prices *v1.PriceList) string {
 	var html string
 	for _, price := range prices.Items {
-		html += fmt.Sprintf("<p>%s: %f</p>", price.BreedName, price.AvgPrice)
+		html += fmt.Sprintf("<p>%s: %f : %s: %s : %s</p>", price.BreedName, price.AvgPrice, price.Unit, price.AddressDetail, price.CreatedAt)
 	}
 	return html
 }

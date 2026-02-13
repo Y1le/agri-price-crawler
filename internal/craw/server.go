@@ -82,8 +82,8 @@ func (s *crawServer) PrepareRun() preparedCrawServer {
 	store.SetClient(storeIns)
 
 	s.initRedisStore()
-	s.initCronTask()
 	s.initEmailer()
+	s.initCronTask()
 	s.gs.AddShutdownCallback(shutdown.ShutdownFunc(func(string) error {
 		mysqlStore, _ := mysql.GetMySQLFactoryOr(nil)
 		if mysqlStore != nil {
