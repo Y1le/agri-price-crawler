@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/Y1le/agri-price-crawler/internal/craw/config"
-	emailer "github.com/Y1le/agri-price-crawler/internal/craw/emailer"
+	mailer "github.com/Y1le/agri-price-crawler/internal/craw/mailer"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store/mysql"
 	genericoptions "github.com/Y1le/agri-price-crawler/internal/pkg/options"
@@ -82,7 +82,7 @@ func (s *crawServer) PrepareRun() preparedCrawServer {
 	store.SetClient(storeIns)
 
 	s.initRedisStore()
-	s.initEmailer()
+	s.initmailer()
 	s.initCronTask()
 	s.gs.AddShutdownCallback(shutdown.ShutdownFunc(func(string) error {
 		mysqlStore, _ := mysql.GetMySQLFactoryOr(nil)
@@ -164,8 +164,8 @@ func (s *crawServer) initRedisStore() {
 	go storage.ConnectToRedis(ctx, config)
 }
 
-func (s *crawServer) initEmailer() {
-	emailer.Instance = &emailer.SMTPMailer{
+func (s *crawServer) initmailer() {
+	mailer.Instance = &mailer.SMTPMailer{
 		Host:     s.emailOptions.Host,
 		Port:     s.emailOptions.Port,
 		Username: s.emailOptions.Username,

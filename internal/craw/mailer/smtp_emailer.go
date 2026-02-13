@@ -17,13 +17,13 @@ type SMTPMailer struct {
 }
 
 var (
-	Instance *SMTPMailer
+	Instance Mailer
 )
 var _ Mailer = (*SMTPMailer)(nil)
 
-func GetInstance() *SMTPMailer {
+func GetInstance() Mailer {
 	if Instance == nil {
-		panic("SMTPMailer not initialized. Call Init() first.")
+		panic("Mailer not initialized. Call Init() first.")
 	}
 	return Instance
 }

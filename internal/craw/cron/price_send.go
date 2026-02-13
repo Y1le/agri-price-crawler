@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	mailer "github.com/Y1le/agri-price-crawler/internal/craw/emailer"
+	mailer "github.com/Y1le/agri-price-crawler/internal/craw/mailer"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
 
 	v1 "github.com/Y1le/agri-price-crawler/pkg/api/v1"
