@@ -19,6 +19,9 @@ type Subscribe struct {
 	Email string `json:"email" gorm:"column:email" validate:"required,email,min=1,max=100"`
 
 	City string `json:"city" gorm:"column:city" validate:"required,min=1,max=100"`
+
+	FavoriteFoods string `json:"favoriteFoods" gorm:"column:favoriteFoods" validate:"required,max=256"`
+	DislikeFoods  string `json:"dislikeFoods" gorm:"column:dislikeFoods" validate:"required,max=256"`
 }
 
 // UserList is the whole list of all users which have been stored in stroage.

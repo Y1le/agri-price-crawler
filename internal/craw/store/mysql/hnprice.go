@@ -35,8 +35,8 @@ func (p *prices) List(ctx context.Context, opts metav1.ListOptions) (*v1.PriceLi
 	if cateName, ok := selector.RequiresExactMatch("cateName"); ok {
 		db = db.Where("cateName = ?", cateName)
 	}
-	if breeName, ok := selector.RequiresExactMatch("breeName"); ok {
-		db = db.Where("breeName = ?", breeName)
+	if breedName, ok := selector.RequiresExactMatch("breedName"); ok {
+		db = db.Where("breedName = ?", breedName)
 	}
 	if createdAtStr, ok := selector.RequiresExactMatch("createdAt"); ok {
 		targetDate, err := time.Parse("2006-01-02", createdAtStr)

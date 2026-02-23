@@ -9,6 +9,7 @@ const (
 
 	// ErrUserAlreadyExist - 400: User already exist.
 	ErrUserAlreadyExist
+	ErrUserNotExist
 )
 
 // iam-apiserver: secret errors.
@@ -24,4 +25,17 @@ const (
 const (
 	// ErrPolicyNotFound - 404: Policy not found.
 	ErrPolicyNotFound int = iota + 110201
+)
+
+const (
+	// ErrSubscribeNotFound - 404: Subscribe not found.
+	ErrSubscribeNotFound int = iota + 110301
+
+	// ErrSubscribeAlreadyExist - 400: Subscribe already exist.
+	ErrSubscribeAlreadyExist
+)
+
+const (
+	// ErrPriceNotFound - 404: Price not found.
+	ErrPriceNotFound int = iota + 110401
 )
