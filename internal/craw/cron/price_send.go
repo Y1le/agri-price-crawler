@@ -81,7 +81,7 @@ func (t *PriceSendTaskImpl) Run(ctx context.Context, targetDate string) error {
 				Portions:      2,
 			})
 			if err != nil {
-				log.Printf("failed to generate recipe for user %s: %v", recip.ID, err)
+				log.Printf("failed to generate recipe for user %d: %v", recip.ID, err)
 			}
 			if err := emailer.SendBulkEmails([]*v1.Subscribe{recip}, subject, htmlBody+recipeResp.Content); err != nil {
 				return fmt.Errorf("failed to send bulk emails: %w", err)

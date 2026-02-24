@@ -13,8 +13,6 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-// GenerateRecipe generate personalized recipes
-// DoubaoRecipeClient 豆包菜谱生成客户端（实现 ai.RecipeFactory 接口）
 type RecipeClient struct {
 	client     *openai.Client
 	timeout    time.Duration
@@ -26,10 +24,10 @@ var _ ai.RecipeFactory = (*RecipeClient)(nil)
 
 // GenerateRecipe 实现 ai.RecipeFactory 接口：生成个性化菜谱
 func (c *RecipeClient) GenerateRecipe(ctx context.Context, req *ai.RecipeRequest) (*ai.RecipeResponse, error) {
-	// 1. 构造豆包 Prompt
+	// 构造豆包 Prompt
 	prompt := buildRecipePrompt(req)
 
-	// 2. 带重试的 API 调用
+	// 带重试的 API 调用
 	var recipeContent string
 	err := retry.Do(
 		func() error {
@@ -71,7 +69,7 @@ func (c *RecipeClient) GenerateRecipe(ctx context.Context, req *ai.RecipeRequest
 		}),
 	)
 
-	// 3. 失败降级（返回默认菜谱）
+	// 失败降级（返回默认菜谱）
 	if err != nil {
 		fmt.Printf("doubao call failed after retries: %v, use default recipe\n", err)
 		return &ai.RecipeResponse{
@@ -80,7 +78,7 @@ func (c *RecipeClient) GenerateRecipe(ctx context.Context, req *ai.RecipeRequest
 		}, nil
 	}
 
-	// 4. 成功返回
+	// 成功返回
 	return &ai.RecipeResponse{
 		Content:   recipeContent,
 		IsDefault: false,
@@ -116,6 +114,6 @@ func getDefaultRecipe(req *ai.RecipeRequest) string {
 	// 反馈引导
 	sb.WriteString("如果该问题持续出现，可联系我们的客服反馈，感谢您的理解！\n")
 	// 保留极简的请求标识（便于排查问题，可选）
-	sb.WriteString(fmt.Sprintf("请求ID参考：%s\n", req.UserID))
+	sb.WriteString(fmt.Sprintf("请求ID参考：%d\n", req.UserID))
 	return sb.String()
 }
