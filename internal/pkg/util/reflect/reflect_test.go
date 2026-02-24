@@ -24,14 +24,14 @@ func TestGetObjFieldsMap(t *testing.T) {
 		"B": 2,
 		"C": 3,
 	}) {
-		t.Fatalf("not equal")
+		t.Fatal("not equal")
 	}
 
 	m = GetObjFieldsMap(org, []string{"A"})
 	if !reflect.DeepEqual(m, map[string]interface{}{
 		"A": 1,
 	}) {
-		t.Fatalf("not equal")
+		t.Fatal("not equal")
 	}
 }
 
@@ -56,7 +56,7 @@ func TestCopyObj(t *testing.T) {
 
 	changed, err := CopyObj(org, des, []string{"A"})
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatalf("copy failed: %s", err.Error())
 	}
 
 	if !changed {
@@ -74,7 +74,7 @@ func TestCopyObj(t *testing.T) {
 	des.A = org.A
 	changed, err = CopyObj(org, des, []string{"A"})
 	if err != nil {
-		t.Fatalf(err.Error())
+		t.Fatalf("copy failed: %s", err.Error())
 	}
 
 	if changed {
