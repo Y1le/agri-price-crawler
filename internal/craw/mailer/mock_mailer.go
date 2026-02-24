@@ -7,6 +7,7 @@ package mailer
 import (
 	reflect "reflect"
 
+	v1 "github.com/Y1le/agri-price-crawler/pkg/api/v1"
 	gomock "github.com/golang/mock/gomock"
 )
 
@@ -48,7 +49,7 @@ func (mr *MockMailerMockRecorder) Send(email interface{}) *gomock.Call {
 }
 
 // SendBulkEmails mocks base method.
-func (m *MockMailer) SendBulkEmails(recipients []Recipient, subject, htmlBody string) error {
+func (m *MockMailer) SendBulkEmails(recipients []*v1.Subscribe, subject, htmlBody string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SendBulkEmails", recipients, subject, htmlBody)
 	ret0, _ := ret[0].(error)

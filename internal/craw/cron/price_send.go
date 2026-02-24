@@ -3,10 +3,12 @@ package cron
 import (
 	"context"
 	"fmt"
+	"log"
+	"strings"
 
+	"github.com/Y1le/agri-price-crawler/internal/ai"
 	mailer "github.com/Y1le/agri-price-crawler/internal/craw/mailer"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
-
 	v1 "github.com/Y1le/agri-price-crawler/pkg/api/v1"
 	metav1 "github.com/marmotedu/component-base/pkg/meta/v1"
 )
@@ -40,15 +42,12 @@ func (t *PriceSendTaskImpl) Run(ctx context.Context, targetDate string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get all subscribers: %w", err)
 	}
-	recipients := make(map[string][]mailer.Recipient)
-	// recipients := make([]mailer.Recipient, 0, len(subscribes))
+	recipients := make(map[string][]*v1.Subscribe)
+	// recipients := make([]v1.Subscribe, 0, len(subscribes))v1.Subscribe
 	for _, subscribe := range subscribes {
-		recipients[subscribe.City] = append(recipients[subscribe.City], mailer.Recipient{
-			Email: subscribe.Email,
-			Name:  subscribe.Name,
-		})
+		recipients[subscribe.City] = append(recipients[subscribe.City], subscribe)
 	}
-
+	aigen := ai.Client()
 	emailer := mailer.GetInstance()
 	for city, recips := range recipients {
 		offset, limit := int64(0), int64(10)
@@ -60,6 +59,10 @@ func (t *PriceSendTaskImpl) Run(ctx context.Context, targetDate string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get all prices: %w", err)
 		}
+		if err != nil {
+			return fmt.Errorf("failed to generate recipe: %w", err)
+		}
+
 		subject := fmt.Sprintf("最新的%s农产品价格", city)
 		htmlBody := fmt.Sprintf(`
 			<html>
@@ -69,11 +72,24 @@ func (t *PriceSendTaskImpl) Run(ctx context.Context, targetDate string) error {
 				</body>
 			</html>
 		`, city, pricesToHtml(prices))
+		for _, recip := range recips {
+			recipeResp, err := aigen.RecipeGenerator().GenerateRecipe(ctx, &ai.RecipeRequest{
+				UserID:        recip.ID,
+				FavoriteFoods: strings.Split(recip.FavoriteFoods, ","),
+				DislikeFoods:  strings.Split(recip.DislikeFoods, ","),
+				PriceData:     pricesToPriceData(prices),
+				Portions:      2,
+			})
+			if err != nil {
+				log.Printf("failed to generate recipe for user %s: %v", recip.ID, err)
+			}
+			if err := emailer.SendBulkEmails([]*v1.Subscribe{recip}, subject, htmlBody+recipeResp.Content); err != nil {
+				return fmt.Errorf("failed to send bulk emails: %w", err)
+			}
+		}
 
 		// 发送邮件
-		if err := emailer.SendBulkEmails(recips, subject, htmlBody); err != nil {
-			return fmt.Errorf("failed to send bulk emails: %w", err)
-		}
+
 	}
 
 	return nil
@@ -85,4 +101,12 @@ func pricesToHtml(prices *v1.PriceList) string {
 		html += fmt.Sprintf("<p>%s: %f : %s: %s : %s</p>", price.BreedName, price.AvgPrice, price.Unit, price.AddressDetail, price.CreatedAt)
 	}
 	return html
+}
+
+func pricesToPriceData(prices *v1.PriceList) map[string]float64 {
+	priceData := make(map[string]float64)
+	for _, price := range prices.Items {
+		priceData[price.BreedName] = price.AvgPrice
+	}
+	return priceData
 }

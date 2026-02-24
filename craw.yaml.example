@@ -93,3 +93,12 @@ email:
   username: your_email@qq.com
   password: vmmpotyiqjlbdeib   # QQ 邮箱授权码
   from: "AgriPrice <your_email@qq.com>"
+
+
+# https://doubao.apifox.cn/ Go to this website to get the api-key and base-url
+doubao:
+  api-key: "1cbc28e7-4585-44db-be9d-73aabd08c5ff"
+  base-url: "https://ark.cn-beijing.volces.com/api/v3"
+  timeout-sec: 60
+  max-retries: 3
+  model: "doubao-seed-2-0-pro-260215"

@@ -5,6 +5,7 @@ import (
 	"log"
 	"sync"
 
+	v1 "github.com/Y1le/agri-price-crawler/pkg/api/v1"
 	"gopkg.in/gomail.v2"
 )
 
@@ -41,7 +42,7 @@ func (s *SMTPMailer) Send(e Email) error {
 	// return em.Send(addr, auth)
 }
 
-func (s *SMTPMailer) SendBulkEmails(recipients []Recipient, subject, htmlBody string) error {
+func (s *SMTPMailer) SendBulkEmails(recipients []*v1.Subscribe, subject, htmlBody string) error {
 	// 创建 SMTP 拨号器（连接池）
 	dialer := gomail.NewDialer(s.Host, s.Port, s.Username, s.Password)
 
@@ -59,7 +60,7 @@ func (s *SMTPMailer) SendBulkEmails(recipients []Recipient, subject, htmlBody st
 
 	for _, r := range recipients {
 		wg.Add(1)
-		go func(recipient Recipient) {
+		go func(recipient *v1.Subscribe) {
 			defer wg.Done()
 
 			semaphore <- struct{}{}

@@ -6,6 +6,7 @@ require (
 	github.com/AlekSi/pointer v1.2.0
 	github.com/appleboy/gin-jwt/v2 v2.10.3
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
+	github.com/avast/retry-go/v4 v4.7.0
 	github.com/buger/jsonparser v1.1.1
 	github.com/fatih/color v1.15.0
 	github.com/gin-contrib/cors v1.7.6
@@ -23,6 +24,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/novalagung/gubrak v1.0.0
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/sashabaranov/go-openai v1.41.2
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.2

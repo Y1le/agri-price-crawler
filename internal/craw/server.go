@@ -3,6 +3,8 @@ package craw
 import (
 	"context"
 
+	"github.com/Y1le/agri-price-crawler/internal/ai"
+	"github.com/Y1le/agri-price-crawler/internal/ai/doubao"
 	"github.com/Y1le/agri-price-crawler/internal/craw/config"
 	mailer "github.com/Y1le/agri-price-crawler/internal/craw/mailer"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
@@ -23,7 +25,8 @@ type crawServer struct {
 	crawlerOptions    *genericoptions.CrawlerOptions
 	genericCrawServer *genericcrawserver.GenericCrawServer
 
-	emailOptions *genericoptions.EmailOptions
+	emailOptions  *genericoptions.EmailOptions
+	doubaoOptions *genericoptions.DoubaoOptions
 }
 
 type preparedCrawServer struct {
@@ -67,6 +70,7 @@ func createCRAWServer(cfg *config.Config) (*crawServer, error) {
 		crawlerOptions:    cfg.CrawlerOptions,
 		genericCrawServer: genericServer,
 		emailOptions:      cfg.EmailOptions,
+		doubaoOptions:     cfg.DoubaoOptions,
 	}
 
 	return server, nil
@@ -83,6 +87,13 @@ func (s *crawServer) PrepareRun() preparedCrawServer {
 
 	s.initRedisStore()
 	s.initmailer()
+	// init doubao recipe client
+	log.Debugf("doubao options: %v", s.doubaoOptions)
+	doubaoIns, err := doubao.GetDoubaoFactoryOr(s.doubaoOptions)
+	ai.SetClient(doubaoIns)
+	if err != nil {
+		log.Fatalf("failed to initialize Doubao factory: %v", err)
+	}
 	s.initCronTask()
 	s.gs.AddShutdownCallback(shutdown.ShutdownFunc(func(string) error {
 		mysqlStore, _ := mysql.GetMySQLFactoryOr(nil)

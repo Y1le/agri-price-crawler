@@ -38,6 +38,8 @@ CREATE TABLE `subscribe` (
   `name` varchar(45) NOT NULL,
   `email` VARCHAR(256) NOT NULL,                  
   `city` VARCHAR(256) NOT NULL,
+  `favoriteFoods` VARCHAR(256) NOT NULL DEFAULT 'Nothing to like',
+  `dislikeFoods` VARCHAR(256) NOT NULL DEFAULT 'Nothing to dislike',
   `extendShadow` longtext DEFAULT NULL,
   `createdAt` timestamp NOT NULL DEFAULT current_timestamp(),
   `updatedAt` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),

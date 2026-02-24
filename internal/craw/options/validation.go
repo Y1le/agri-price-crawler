@@ -9,6 +9,7 @@ func (o *Options) Validate() []error {
 	errs = append(errs, o.CronOptions.Validate()...)
 	errs = append(errs, o.CrawlerOptions.Validate()...)
 	errs = append(errs, o.EmailOptions.Validate()...)
+	errs = append(errs, o.DoubaoOptions.Validate()...)
 
 	return errs
 }
