@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{.RecipeName}} - 个性化家庭菜谱</title>
+    <title>今日家常菜谱 - 个性化推荐</title>
     <style>
-        /* 统一的页面样式，保证所有菜谱页面风格一致 */
+        /* 样式部分不变，省略 */
         * {
             margin: 0;
             padding: 0;
@@ -69,25 +69,28 @@
     </style>
 </head>
 <body>
-    {{range .Recipes}}
-        <div class="recipe-card">
-            <h2 class="recipe-title">{{.RecipeName}}</h2>
-            <div class="section-title">食材准备</div>
-            <ul class="ingredients-list">
-                {{range .Ingredients}}
-                <li>{{.Name}}：{{.Usage}} <span class="price">({{.Price}}元/{{.Unit}})</span></li>
-                {{end}}
-            </ul>
-            <div class="section-title">烹饪步骤</div>
-            <ol class="steps-list">
-                {{range .Steps}}
-                <li>{{.}}</li>
-                {{end}}
-            </ol>
-            <div class="price-tips">
-                <strong>性价比小贴士：</strong>{{.PriceTips}}
+    <!-- 补充：加一个container包裹，样式更规范 -->
+    <div class="container">
+        {{range .Recipes}}
+            <div class="recipe-card">
+                <h2 class="recipe-title">{{.RecipeName}}</h2>
+                <div class="section-title">食材准备</div>
+                <ul class="ingredients-list">
+                    {{range .Ingredients}}
+                    <li>{{.Name}}：{{.Usage}} <span class="price">({{.Price}}元/{{.Unit}})</span></li>
+                    {{end}}
+                </ul>
+                <div class="section-title">烹饪步骤</div>
+                <ol class="steps-list">
+                    {{range .Steps}}
+                    <li>{{.}}</li>
+                    {{end}}
+                </ol>
+                <div class="price-tips">
+                    <strong>性价比小贴士：</strong>{{.PriceTips}}
+                </div>
             </div>
-        </div>
-    {{end}}
+        {{end}}
+    </div>
 </body>
 </html>

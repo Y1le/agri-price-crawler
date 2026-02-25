@@ -51,7 +51,7 @@ func init() {
 func (c *RecipeClient) GenerateRecipe(ctx context.Context, req *ai.RecipeRequest) (*ai.RecipeResponse, error) {
 	prompt := buildRecipePrompt(req)
 	if len(req.PriceData) == 0 {
-		fmt.Printf("price data is empty, use default recipe\n")
+		log.Warnf("price data is empty, use default recipe\n")
 		emptyHTML, err := renderEmptyRecipeHTML()
 		if err != nil {
 			return nil, fmt.Errorf("render empty recipe template failed: %w", err)
@@ -111,7 +111,6 @@ func (c *RecipeClient) GenerateRecipe(ctx context.Context, req *ai.RecipeRequest
 	)
 
 	if err != nil {
-		fmt.Printf("doubao call failed after retries: %v, use default recipe\n", err)
 		return &ai.RecipeResponse{
 			Content:   getDefaultRecipe(req), // 默认菜谱
 			IsDefault: true,
@@ -121,7 +120,7 @@ func (c *RecipeClient) GenerateRecipe(ctx context.Context, req *ai.RecipeRequest
 	// 渲染结构化数据为HTML
 	htmlContent, err := renderRecipeHTML(&recipeList)
 	if err != nil {
-		fmt.Printf("doubao call failed after retries: %v, use default recipe\n", err)
+		log.Warnf("render recipe HTML failed: %v, use default recipe\n", err)
 		return &ai.RecipeResponse{
 			Content:   getDefaultRecipe(req),
 			IsDefault: true,
