@@ -3,13 +3,13 @@ package cron
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/Y1le/agri-price-crawler/internal/ai"
 	mailer "github.com/Y1le/agri-price-crawler/internal/craw/mailer"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
 	v1 "github.com/Y1le/agri-price-crawler/pkg/api/v1"
+	"github.com/Y1le/agri-price-crawler/pkg/log"
 	metav1 "github.com/marmotedu/component-base/pkg/meta/v1"
 )
 
@@ -59,19 +59,16 @@ func (t *PriceSendTaskImpl) Run(ctx context.Context, targetDate string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get all prices: %w", err)
 		}
-		if err != nil {
-			return fmt.Errorf("failed to generate recipe: %w", err)
-		}
 
 		subject := fmt.Sprintf("最新的%s农产品价格", city)
-		htmlBody := fmt.Sprintf(`
-			<html>
-				<body>
-					<h1>最新的%s农产品价格</h1>
-					<p>%s</p>
-				</body>
-			</html>
-		`, city, pricesToHtml(prices))
+		// htmlBody := fmt.Sprintf(`
+		// 	<html>
+		// 		<body>
+		// 			<h1>最新的%s农产品价格</h1>
+		// 			<p>%s</p>
+		// 		</body>
+		// 	</html>
+		// `, city, pricesToHtml(prices))
 		for _, recip := range recips {
 			recipeResp, err := aigen.RecipeGenerator().GenerateRecipe(ctx, &ai.RecipeRequest{
 				UserID:        recip.ID,
@@ -81,14 +78,13 @@ func (t *PriceSendTaskImpl) Run(ctx context.Context, targetDate string) error {
 				Portions:      2,
 			})
 			if err != nil {
-				log.Printf("failed to generate recipe for user %d: %v", recip.ID, err)
+				log.Errorf("failed to generate recipe for user %d: %v", recip.ID, err)
 			}
-			if err := emailer.SendBulkEmails([]*v1.Subscribe{recip}, subject, htmlBody+recipeResp.Content); err != nil {
+			log.Debugf("recipeResp: %v", recipeResp.Content)
+			if err := emailer.SendBulkEmails([]*v1.Subscribe{recip}, subject, recipeResp.Content); err != nil {
 				return fmt.Errorf("failed to send bulk emails: %w", err)
 			}
 		}
-
-		// 发送邮件
 
 	}
 
@@ -103,10 +99,14 @@ func pricesToHtml(prices *v1.PriceList) string {
 	return html
 }
 
-func pricesToPriceData(prices *v1.PriceList) map[string]float64 {
-	priceData := make(map[string]float64)
+func pricesToPriceData(prices *v1.PriceList) []ai.Food {
+	priceData := make([]ai.Food, 0, len(prices.Items))
 	for _, price := range prices.Items {
-		priceData[price.BreedName] = price.AvgPrice
+		priceData = append(priceData, ai.Food{
+			Name:  price.BreedName,
+			Price: price.AvgPrice,
+			Unit:  price.Unit,
+		})
 	}
 	return priceData
 }

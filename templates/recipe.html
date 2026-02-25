@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.RecipeName}} - 个性化家庭菜谱</title>
+    <style>
+        /* 统一的页面样式，保证所有菜谱页面风格一致 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+        .container {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .recipe-title {
+            color: #e64340;
+            font-size: 24px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f5f5f5;
+        }
+        .section-title {
+            font-size: 18px;
+            color: #333;
+            margin: 15px 0 10px 0;
+            font-weight: 600;
+        }
+        .ingredients-list {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .ingredients-list li {
+            background: #f9f9f9;
+            padding: 8px 12px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+        }
+        .ingredients-list li .price {
+            color: #e64340;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+        .steps-list {
+            list-style: decimal;
+            padding-left: 20px;
+            line-height: 1.8;
+            color: #555;
+        }
+        .price-tips {
+            margin-top: 20px;
+            padding: 10px;
+            background: #fff8e1;
+            border-left: 4px solid #ffc107;
+            color: #856404;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    {{range .Recipes}}
+        <div class="recipe-card">
+            <h2 class="recipe-title">{{.RecipeName}}</h2>
+            <div class="section-title">食材准备</div>
+            <ul class="ingredients-list">
+                {{range .Ingredients}}
+                <li>{{.Name}}：{{.Usage}} <span class="price">({{.Price}}元/{{.Unit}})</span></li>
+                {{end}}
+            </ul>
+            <div class="section-title">烹饪步骤</div>
+            <ol class="steps-list">
+                {{range .Steps}}
+                <li>{{.}}</li>
+                {{end}}
+            </ol>
+            <div class="price-tips">
+                <strong>性价比小贴士：</strong>{{.PriceTips}}
+            </div>
+        </div>
+    {{end}}
+</body>
+</html>

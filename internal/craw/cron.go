@@ -34,6 +34,11 @@ func (s *crawServer) initCronTask() {
 	mysqlStore, _ := mysql.GetMySQLFactoryOr(nil)
 
 	dailySend := task.NewPriceSendTask(mysqlStore)
+	// if err := dailySend.Run(ctx, time.Now().AddDate(0, 0, -1).Format("2006-01-02")); err != nil {
+	// 	log.Errorf("Daily send failed: %v", err)
+	// } else {
+	// 	log.Infof("Daily send succeeded")
+	// }
 	// execCtx, execCancel := context.WithTimeout(ctx, 10*time.Minute)
 	// defer execCancel()
 

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>今日暂无菜谱推荐</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Microsoft YaHei", sans-serif; }
+        .container {
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 40px 20px;
+            text-align: center;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .empty-icon {
+            font-size: 60px;
+            color: #ccc;
+            margin-bottom: 20px;
+        }
+        .empty-title {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 15px;
+        }
+        .empty-desc {
+            font-size: 16px;
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 30px;
+        }
+        .empty-tips {
+            font-size: 14px;
+            color: #999;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="empty-icon">📊</div>
+        <h1 class="empty-title">今日暂无农产品价格数据</h1>
+        <p class="empty-desc">
+            暂时无法根据食材价格为您生成个性化菜谱<br>
+            请稍后重试，或联系管理员更新价格数据
+        </p>
+        <div class="empty-tips">
+            小贴士：价格数据每日更新，通常在上午8点后同步当日最新农产品价格
+        </div>
+    </div>
+</body>
+</html>

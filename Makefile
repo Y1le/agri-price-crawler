@@ -19,3 +19,7 @@ server:
 .PHONY: redis
 redis:
 	docker run --name redis -p 6379:6379 -d redis:7-alpine
+
+.PHONY: proto
+proto:
+	protoc --proto_path=proto/v1 --go_out=pb --go_opt=paths=source_relative --go-grpc_out=pb --go-grpc_opt=paths=source_relative proto/v1/*.proto
