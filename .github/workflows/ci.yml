@@ -4,14 +4,11 @@ name: AgriPriceCrawlerCI
 on: 
   push:
     branches:
-      - '*'          # 所有分支推送触发
-      - '!main'      # main分支单独处理（避免重复触发）
-    tags:
-      - 'v*'         # 版本标签推送（如v1.0.0）触发发布流程
+      - 'main'  # 仅 push main 触发
   pull_request:
     types: [opened, reopened, synchronize]
-    branches: [main, develop]  # 仅监听主分支/开发分支的PR
-  workflow_dispatch:           # 支持手动触发CI
+    branches: [main]  # 仅 PR main 触发
+  workflow_dispatch:  # 保留手动触发（可选）
 
 jobs:
   # 核心CI流程：测试、Lint、构建
