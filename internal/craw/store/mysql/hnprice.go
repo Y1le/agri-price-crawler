@@ -28,6 +28,12 @@ func (p *prices) Save(ctx context.Context, price []*v1.Price) error {
 func (p *prices) List(ctx context.Context, opts metav1.ListOptions) (*v1.PriceList, error) {
 	priceList := &v1.PriceList{}
 	ol := gormutil.Unpointer(opts.Offset, opts.Limit)
+	if ol.Offset < 0 {
+		ol.Offset = 0
+	}
+	if ol.Limit <= 0 || ol.Limit > 100 {
+		ol.Limit = 10
+	}
 	// CateName
 	// BreedName
 	selector, _ := fields.ParseSelector(opts.FieldSelector)
