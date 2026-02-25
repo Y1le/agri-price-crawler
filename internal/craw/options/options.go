@@ -18,6 +18,7 @@ type Options struct {
 	RedisOptions            *genericoptions.RedisOptions           `json:"redis"      mapstructure:"redis"`
 	CronOptions             *genericoptions.CronOptions            `json:"cron"           mapstructure:"cron"`
 	CrawlerOptions          *genericoptions.CrawlerOptions         `json:"crawler"       mapstructure:"crawler"`
+	GRPCOptions             *genericoptions.GRPCOptions            `json:"grpc"      mapstructure:"grpc"`
 	JwtOptions              *genericoptions.JwtOptions             `json:"jwt"      mapstructure:"jwt"`
 	Log                     *log.Options                           `json:"log"      mapstructure:"log"`
 	FeatureOptions          *genericoptions.FeatureOptions         `json:"feature"  mapstructure:"feature"`
@@ -32,6 +33,7 @@ func NewOptions() *Options {
 		RedisOptions:   genericoptions.NewRedisOptions(),
 		CronOptions:    genericoptions.NewCronOptions(),
 		CrawlerOptions: genericoptions.NewCrawlerOptions(),
+		GRPCOptions:    genericoptions.NewGRPCOptions(),
 		Log:            log.NewOptions(),
 		EmailOptions:   genericoptions.NewEmailOptions(),
 		DoubaoOptions:  genericoptions.NewDoubaoOptions(),
@@ -47,6 +49,7 @@ func (o *Options) Flags() (fss cliflag.NamedFlagSets) {
 	o.CronOptions.AddFlags(fss.FlagSet("cron"))
 	o.Log.AddFlags(fss.FlagSet("logs"))
 	o.CrawlerOptions.AddFlags(fss.FlagSet("crawler"))
+	o.GRPCOptions.AddFlags(fss.FlagSet("grpc"))
 	o.EmailOptions.AddFlags(fss.FlagSet("email"))
 	o.DoubaoOptions.AddFlags(fss.FlagSet("doubao"))
 

@@ -2,19 +2,25 @@ package craw
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/Y1le/agri-price-crawler/internal/ai"
 	"github.com/Y1le/agri-price-crawler/internal/ai/doubao"
 	"github.com/Y1le/agri-price-crawler/internal/craw/config"
+	"github.com/Y1le/agri-price-crawler/internal/craw/gapi"
 	mailer "github.com/Y1le/agri-price-crawler/internal/craw/mailer"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store/mysql"
 	genericoptions "github.com/Y1le/agri-price-crawler/internal/pkg/options"
 	genericcrawserver "github.com/Y1le/agri-price-crawler/internal/pkg/server"
+	"github.com/Y1le/agri-price-crawler/pb"
 	"github.com/Y1le/agri-price-crawler/pkg/log"
 	shutdown "github.com/Y1le/agri-price-crawler/pkg/shutdown"
 	"github.com/Y1le/agri-price-crawler/pkg/shutdown/shutdownmanagers/posixsignal"
 	"github.com/Y1le/agri-price-crawler/pkg/storage"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/reflection"
 )
 
 type crawServer struct {
@@ -23,6 +29,7 @@ type crawServer struct {
 	redisOptions      *genericoptions.RedisOptions
 	cronOptions       *genericoptions.CronOptions
 	crawlerOptions    *genericoptions.CrawlerOptions
+	gRPCServer        *grpcServer
 	genericCrawServer *genericcrawserver.GenericCrawServer
 
 	emailOptions  *genericoptions.EmailOptions
@@ -35,6 +42,8 @@ type preparedCrawServer struct {
 
 // ExtraConfig defines extra configuration for the craw-server.
 type ExtraConfig struct {
+	Addr         string
+	MaxMsgSize   int
 	ServerCert   genericoptions.GeneratableKeyCert
 	mysqlOptions *genericoptions.MySQLOptions
 	// etcdOptions      *genericoptions.EtcdOptions
@@ -58,7 +67,7 @@ func createCRAWServer(cfg *config.Config) (*crawServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = extraConfig.complete().New()
+	extraServer, err := extraConfig.complete().New()
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +77,7 @@ func createCRAWServer(cfg *config.Config) (*crawServer, error) {
 		redisOptions:      cfg.RedisOptions,
 		cronOptions:       cfg.CronOptions,
 		crawlerOptions:    cfg.CrawlerOptions,
+		gRPCServer:        extraServer,
 		genericCrawServer: genericServer,
 		emailOptions:      cfg.EmailOptions,
 		doubaoOptions:     cfg.DoubaoOptions,
@@ -95,7 +105,13 @@ func (s *crawServer) PrepareRun() preparedCrawServer {
 		log.Fatalf("failed to initialize Doubao factory: %v", err)
 	}
 	s.initCronTask()
+
+	s.gRPCServer.Run()
+
 	s.gs.AddShutdownCallback(shutdown.ShutdownFunc(func(string) error {
+
+		s.gRPCServer.Close()
+
 		mysqlStore, _ := mysql.GetMySQLFactoryOr(nil)
 		if mysqlStore != nil {
 			_ = mysqlStore.Close()
@@ -141,6 +157,8 @@ func buildGenericConfig(cfg *config.Config) (genericConfig *genericcrawserver.Co
 
 func buildExtraConfig(cfg *config.Config) (*ExtraConfig, error) {
 	return &ExtraConfig{
+		Addr:         cfg.GRPCOptions.BindAddress + ":" + strconv.Itoa(cfg.GRPCOptions.BindPort), // 从配置中读取 gRPC 地址
+		MaxMsgSize:   cfg.GRPCOptions.MaxMsgSize,                                                 // 从配置中读取最大消息大小
 		ServerCert:   cfg.SecureServing.ServerCert,
 		mysqlOptions: cfg.MySQLOptions,
 		// etcdOptions:      cfg.EtcdOptions,
@@ -192,15 +210,34 @@ type completedExtraConfig struct {
 
 // Complete fills in any fields not set that are required to have valid data and can be derived from other fields.
 func (c *ExtraConfig) complete() *completedExtraConfig {
+	if c.Addr == "" {
+		c.Addr = "127.0.0.1:8081"
+	}
+	if c.MaxMsgSize == 0 {
+		c.MaxMsgSize = 1024 * 1024 * 4 // 默认 4MB
+	}
 	return &completedExtraConfig{c}
 }
 
 // New create a grpcAPIServer instance.
-func (c *completedExtraConfig) New() error {
+func (c *completedExtraConfig) New() (*grpcServer, error) {
+	creds, err := credentials.NewServerTLSFromFile(c.ServerCert.CertKey.CertFile, c.ServerCert.CertKey.KeyFile)
+	if err != nil {
+		log.Fatalf("Failed to generate credentials %s", err.Error())
+	}
+	opts := []grpc.ServerOption{grpc.MaxRecvMsgSize(c.MaxMsgSize), grpc.Creds(creds)}
+	newGrpcServer := grpc.NewServer(opts...)
 
 	storeIns, _ := mysql.GetMySQLFactoryOr(c.mysqlOptions)
-	// storeIns, _ := etcd.GetEtcdFactoryOr(c.etcdOptions, nil)
 	store.SetClient(storeIns)
+	crawService := gapi.NewCrawService(storeIns)
+	if err != nil {
+		log.Fatalf("Failed to get cache instance: %s", err.Error())
+	}
 
-	return nil
+	pb.RegisterCrawServiceServer(newGrpcServer, crawService)
+
+	reflection.Register(newGrpcServer)
+
+	return &grpcServer{newGrpcServer, c.Addr}, nil
 }

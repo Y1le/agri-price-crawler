@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package pb;
+
+import "user.proto";
+import "google/protobuf/timestamp.proto";
+
+
+option go_package = "github.com/agri-price-crawler/pb";
+
+message LoginUserRequest {
+    string email = 1;
+    string password = 2;
+}
+
+message LoginUserResponse {
+    User user = 1;
+    google.protobuf.Timestamp expires_at = 2;
+    string token = 3;
+}

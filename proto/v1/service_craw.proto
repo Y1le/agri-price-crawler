@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package pb;
+
+import "google/protobuf/timestamp.proto";
+import "rpc_login_user.proto";
+import "rpc_create_user.proto";
+
+
+option go_package = "github.com/agri-price-crawler/pb";
+
+service CrawService {
+    rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {}
+    rpc LoginUser(LoginUserRequest) returns (LoginUserResponse) {}
+}
