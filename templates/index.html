@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>农产品价格采集系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .container { margin-top: 30px; }
+        .card { margin-bottom: 20px; }
+        .hidden { display: none; }
+        .alert { margin-top: 10px; }
+        .nav-tabs { margin-bottom: 20px; }
+        .form-row { margin-bottom: 10px; }
+        .pagination { margin-top: 15px; }
+        .header-actions { margin-bottom: 20px; text-align: right; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 顶部操作区：登录/注册/退出按钮（根据登录状态切换） -->
+        <div class="header-actions" id="header-actions">
+            <button id="login-btn-header" class="btn btn-primary me-2">登录</button>
+            <button id="register-btn-header" class="btn btn-outline-primary">注册</button>
+        </div>
+
+        <!-- 价格查询模块（默认显示，无需登录） -->
+        <div id="price-module" class="card">
+            <div class="card-header">
+                <h4>农产品价格查询</h4>
+            </div>
+            <div class="card-body">
+                <!-- 搜索条件 -->
+                <div class="row mb-3">
+                    <div class="col-md-3">
+                        <label class="form-label">品类名称</label>
+                        <input type="text" id="search-cateName" class="form-control" placeholder="如：蜂蜜">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">地址</label>
+                        <input type="text" id="search-address" class="form-control" placeholder="如：广西">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">日期</label>
+                        <input type="date" id="search-date" class="form-control">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button id="search-btn" class="btn btn-primary w-100">搜索</button>
+                    </div>
+                </div>
+
+                <!-- 分页控制 -->
+                <div class="row mb-3 align-items-center">
+                    <div class="col-md-6">
+                        <div class="btn-group" role="group">
+                            <button id="prev-page" class="btn btn-outline-secondary" disabled>上一页</button>
+                            <button id="next-page" class="btn btn-outline-secondary" disabled>下一页</button>
+                        </div>
+                        <span class="ms-2" id="page-info">第 1 页 / 共 0 页</span>
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <label class="form-label d-inline me-2">每页条数：</label>
+                        <select id="page-size" class="form-select d-inline w-auto">
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 结果展示 -->
+                <div id="price-result" class="mt-3"></div>
+            </div>
+        </div>
+
+        <!-- 登录弹窗（模态框） -->
+        <div class="modal fade" id="login-modal" tabindex="-1" aria-labelledby="login-modal-label" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="login-modal-label">系统登录</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">用户名</label>
+                            <input type="text" id="login-username" class="form-control" placeholder="请输入用户名">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">密码</label>
+                            <input type="password" id="login-password" class="form-control" placeholder="请输入密码">
+                        </div>
+                        <div id="login-alert" class="alert alert-danger hidden"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" id="do-login-btn" class="btn btn-primary">登录</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 注册弹窗（模态框） -->
+        <div class="modal fade" id="register-modal" tabindex="-1" aria-labelledby="register-modal-label" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="register-modal-label">用户注册</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">用户名（name）</label>
+                            <input type="text" id="register-name" class="form-control" placeholder="请输入用户名">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">昵称（nickname）</label>
+                            <input type="text" id="register-nickname" class="form-control" placeholder="请输入昵称">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">邮箱（email）</label>
+                            <input type="email" id="register-email" class="form-control" placeholder="请输入邮箱">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">密码（password）</label>
+                            <input type="password" id="register-password" class="form-control" placeholder="请输入密码">
+                        </div>
+                        <div id="register-alert" class="alert alert-danger hidden"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" id="do-register-btn" class="btn btn-primary">注册</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 登录后功能区（普通用户：仅订阅；管理员：订阅+用户管理） -->
+        <div id="auth-module" class="hidden">
+            <ul class="nav nav-tabs" id="auth-nav-tabs">
+                <!-- 订阅标签：所有登录用户可见 -->
+                <li class="nav-item">
+                    <a class="nav-link active" data-bs-toggle="tab" href="#subscribe-tab">订阅管理</a>
+                </li>
+                <!-- 用户管理标签：仅管理员可见 -->
+                <li class="nav-item" id="user-manage-tab" class="hidden">
+                    <a class="nav-link" data-bs-toggle="tab" href="#user-tab">用户管理</a>
+                </li>
+            </ul>
+
+            <div class="tab-content">
+                <!-- 订阅管理标签页 -->
+                <div class="tab-pane fade show active" id="subscribe-tab">
+                    <div class="card">
+                        <div class="card-header">
+                            <h4>订阅管理</h4>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <h5>创建订阅（每天7点将为您生成推荐菜谱发送到您的email）</h5>
+                                <div class="form-row row">
+                                    <div class="col-md-3 mb-2">
+                                        <input type="email" id="subscribe-email" class="form-control" placeholder="订阅邮箱（必填）">
+                                    </div>
+                                    <div class="col-md-3 mb-2">
+                                        <input type="text" id="subscribe-city" class="form-control" placeholder="订阅城市（如：广东茂名）">
+                                    </div>
+                                    <div class="col-md-3 mb-2">
+                                        <input type="text" id="subscribe-favorites" class="form-control" placeholder="偏好食材（如：番茄,鸡蛋）">
+                                    </div>
+                                    <div class="col-md-3 mb-2">
+                                        <input type="text" id="subscribe-dislikes" class="form-control" placeholder="忌口食材（如：蜂蜜,红豆）">
+                                    </div>
+                                </div>
+                                <button id="create-subscribe-btn" class="btn btn-primary">订阅</button>
+                            </div>
+                            <div class="mb-3">
+                                <h5>取消订阅</h5>
+                                <div class="row">
+                                    <div class="col-md-8">
+                                        <input type="email" id="unsubscribe-email" class="form-control" placeholder="输入要取消的订阅邮箱">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <button id="delete-subscribe-btn" class="btn btn-danger">取消订阅</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 用户管理标签页（仅管理员可见） -->
+                <div class="tab-pane fade" id="user-tab">
+                    <div class="card">
+                        <div class="card-header">
+                            <h4>用户管理</h4>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <h5>创建用户</h5>
+                                <div class="row mb-2">
+                                    <div class="col-md-4">
+                                        <input type="text" id="create-username" class="form-control" placeholder="用户名">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <input type="password" id="create-password" class="form-control" placeholder="密码">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <button id="create-user-btn" class="btn btn-primary">创建</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <h5>查询用户列表</h5>
+                                <div class="row mb-2">
+                                    <div class="col-md-2">
+                                        <input type="number" id="user-offset" class="form-control" placeholder="偏移量(offset)" value="0" min="0">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <input type="number" id="user-limit" class="form-control" placeholder="条数(limit)" value="10" min="1" max="100">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <button id="query-user-btn" class="btn btn-success">查询用户列表</button>
+                                    </div>
+                                </div>
+                                <div id="user-result" class="mt-3"></div>
+                            </div>
+                            <div class="mb-3">
+                                <div class="row">
+                                    <div class="col-md-8">
+                                        <input type="text" id="delete-username" class="form-control" placeholder="输入要删除的用户名">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <button id="delete-user-btn" class="btn btn-danger">删除</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 全局状态
+        let token = localStorage.getItem('token') || '';
+        let isAdmin = false; // 标记是否为管理员
+        let currentPage = 1;
+        let pageSize = 10;
+        let totalCount = 0;
+        let totalPages = 0;
+
+        // 模态框实例
+        const loginModal = new bootstrap.Modal(document.getElementById('login-modal'));
+        const registerModal = new bootstrap.Modal(document.getElementById('register-modal'));
+
+        // 页面加载初始化
+        window.onload = function() {
+            // 1. 价格查询默认显示，自动加载第一页数据
+            fetchPriceList(1, pageSize);
+            
+            // 2. 检查登录状态
+            if (token) {
+                checkUserRole(); // 验证用户角色（是否为管理员）
+                updateHeaderActions(true); // 更新顶部按钮为退出
+                document.getElementById('auth-module').classList.remove('hidden'); // 显示登录后功能区
+            } else {
+                updateHeaderActions(false); // 显示登录/注册按钮
+            }
+        };
+
+        // 更新顶部操作按钮（登录/注册 ↔ 退出）
+        function updateHeaderActions(isLoggedIn) {
+            const headerActions = document.getElementById('header-actions');
+            if (isLoggedIn) {
+                headerActions.innerHTML = `
+                    <span class="me-2">当前登录：<strong id="current-username">未知</strong></span>
+                    <button id="logout-btn-header" class="btn btn-warning">退出登录</button>
+                `;
+                // 绑定退出事件
+                document.getElementById('logout-btn-header').addEventListener('click', logout);
+            } else {
+                headerActions.innerHTML = `
+                    <button id="login-btn-header" class="btn btn-primary me-2">登录</button>
+                    <button id="register-btn-header" class="btn btn-outline-primary">注册</button>
+                `;
+                // 绑定登录/注册弹窗事件
+                document.getElementById('login-btn-header').addEventListener('click', () => loginModal.show());
+                document.getElementById('register-btn-header').addEventListener('click', () => registerModal.show());
+            }
+        }
+
+        // 检查用户角色（是否为管理员）
+        async function checkUserRole() {
+            try {
+                // 调用后端接口获取用户信息（需后端实现 /v1/users/current 接口）
+                const resp = await fetch('/v1/users/current', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    isAdmin = data.isAdmin || false;
+                    document.getElementById('current-username').innerText = data.username || '未知';
+                    // 管理员显示用户管理标签
+                    if (isAdmin) {
+                        document.getElementById('user-manage-tab').classList.remove('hidden');
+                    }
+                }
+            } catch (err) {
+                console.error('检查用户角色失败：', err);
+            }
+        }
+
+        // 退出登录
+        async function logout() {
+            try {
+                await fetch('/logout', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                localStorage.removeItem('token');
+                token = '';
+                isAdmin = false;
+                updateHeaderActions(false);
+                document.getElementById('auth-module').classList.add('hidden');
+                alert('退出成功！');
+            } catch (err) {
+                alert('退出失败：' + err.message);
+            }
+        }
+
+        // 价格查询核心函数（无需登录即可访问）
+        async function fetchPriceList(page, size) {
+            const offset = (page - 1) * size;
+            const cateName = document.getElementById('search-cateName').value.trim();
+            const address = document.getElementById('search-address').value.trim();
+            const date = document.getElementById('search-date').value;
+
+            // 构造查询参数
+            let fieldSelector = [];
+            if (cateName) fieldSelector.push(`cateName=${cateName}`);
+            if (address) fieldSelector.push(`addressDetail=${address}`);
+            if (date) fieldSelector.push(`createdAt=${date}`);
+
+            const params = new URLSearchParams();
+            params.append('offset', offset.toString());
+            params.append('limit', size.toString());
+            if (fieldSelector.length > 0) {
+                params.append('fieldSelector', fieldSelector.join(','));
+            }
+
+            try {
+                const resp = await fetch(`/v1/prices?${params.toString()}`); // 价格查询无需Token
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    totalCount = data.totalCount || 0;
+                    totalPages = Math.ceil(totalCount / size);
+                    currentPage = page;
+
+                    // 更新分页控件
+                    document.getElementById('prev-page').disabled = currentPage <= 1;
+                    document.getElementById('next-page').disabled = currentPage >= totalPages;
+                    document.getElementById('page-info').innerText = `第 ${currentPage} 页 / 共 ${totalPages} 页`;
+
+                    // 渲染表格
+                    const resultEl = document.getElementById('price-result');
+                    if (data.items && data.items.length > 0) {
+                        let html = `<div class="text-muted mb-2">总条数：${totalCount}，当前显示：${data.items.length}条</div>`;
+                        html += '<table class="table table-striped table-hover"><thead><tr>';
+                        html += '<th>品类</th><th>品种</th><th>均价</th><th>单位</th><th>地址</th><th>采集时间</th>';
+                        html += '</tr></thead><tbody>';
+                        data.items.forEach(item => {
+                            html += `<tr>
+                                <td>${item.CateName || '-'}</td>
+                                <td>${item.BreedName || '-'}</td>
+                                <td>${item.AvgPrice || '-'}</td>
+                                <td>${item.Unit || '-'}</td>
+                                <td>${item.AddressDetail || '-'}</td>
+                                <td>${item.CreatedAt || '-'}</td>
+                            </tr>`;
+                        });
+                        html += '</tbody></table>';
+                        resultEl.innerHTML = html;
+                    } else {
+                        resultEl.innerHTML = '<div class="alert alert-info">暂无价格数据</div>';
+                    }
+                } else {
+                    alert('查询失败：' + (data.message || '未知错误'));
+                }
+            } catch (err) {
+                alert('查询失败：' + err.message);
+            }
+        }
+
+        // 价格搜索按钮事件
+        document.getElementById('search-btn').addEventListener('click', () => {
+            fetchPriceList(1, pageSize);
+        });
+
+        // 分页按钮事件
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (currentPage > 1) fetchPriceList(currentPage - 1, pageSize);
+        });
+        document.getElementById('next-page').addEventListener('click', () => {
+            if (currentPage < totalPages) fetchPriceList(currentPage + 1, pageSize);
+        });
+
+        // 每页条数变更事件
+        document.getElementById('page-size').addEventListener('change', function() {
+            pageSize = parseInt(this.value);
+            fetchPriceList(1, pageSize);
+        });
+
+        // 登录按钮事件
+        document.getElementById('do-login-btn').addEventListener('click', async function() {
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+            if (!username || !password) {
+                showAlert('login-alert', '用户名和密码不能为空！');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await resp.json();
+                
+                if (resp.ok && data.token) {
+                    token = data.token;
+                    localStorage.setItem('token', token);
+                    loginModal.hide();
+                    updateHeaderActions(true);
+                    checkUserRole();
+                    document.getElementById('auth-module').classList.remove('hidden');
+                    alert('登录成功！');
+                } else {
+                    showAlert('login-alert', data.message || '登录失败！');
+                }
+            } catch (err) {
+                showAlert('login-alert', '网络错误：' + err.message);
+            }
+        });
+
+        // 注册按钮事件
+        document.getElementById('do-register-btn').addEventListener('click', async function() {
+            const name = document.getElementById('register-name').value.trim();
+            const nickname = document.getElementById('register-nickname').value.trim();
+            const email = document.getElementById('register-email').value.trim();
+            const password = document.getElementById('register-password').value.trim();
+
+            if (!name || !nickname || !email || !password) {
+                showAlert('register-alert', '用户名、昵称、邮箱、密码不能为空！');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/v1/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    // 请求体和 Postman 完全一致
+                    body: JSON.stringify({
+                        metadata: {
+                            name: name
+                        },
+                        nickname: nickname,
+                        email: email,
+                        password: password
+                    })
+                });
+                const data = await resp.json();
+                
+                if (resp.ok) {
+                    registerModal.hide();
+                    alert('注册成功！请登录');
+                    // 自动填充登录框
+                    document.getElementById('login-username').value = name;
+                    loginModal.show();
+                } else {
+                    showAlert('register-alert', data.message || '注册失败！');
+                }
+            } catch (err) {
+                showAlert('register-alert', '网络错误：' + err.message);
+            }
+        });
+
+        // 订阅管理 - 创建订阅
+        document.getElementById('create-subscribe-btn').addEventListener('click', async function() {
+            const email = document.getElementById('subscribe-email').value.trim();
+            const city = document.getElementById('subscribe-city').value.trim();
+            const favoriteFoods = document.getElementById('subscribe-favorites').value.trim();
+            const dislikeFoods = document.getElementById('subscribe-dislikes').value.trim();
+            
+            if (!email || !city || !favoriteFoods || !dislikeFoods) {
+                alert('邮箱、城市、偏好和忌口不能为空！');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/v1/subscribes', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ email, city, favoriteFoods, dislikeFoods })
+                });
+                const data = await resp.json();
+                
+                if (resp.ok) {
+                    alert('订阅成功！');
+                    // 清空输入框
+                    document.getElementById('subscribe-email').value = '';
+                    document.getElementById('subscribe-city').value = '';
+                    document.getElementById('subscribe-favorites').value = '';
+                    document.getElementById('subscribe-dislikes').value = '';
+                } else {
+                    alert('订阅失败：' + (data.message || '参数验证失败'));
+                }
+            } catch (err) {
+                alert('订阅失败：' + err.message);
+            }
+        });
+
+        // 订阅管理 - 取消订阅
+        document.getElementById('delete-subscribe-btn').addEventListener('click', async function() {
+            const email = document.getElementById('unsubscribe-email').value;
+            if (!email) {
+                alert('请输入要取消的订阅邮箱！');
+                return;
+            }
+
+            if (!confirm(`确定要取消邮箱【${email}】的订阅吗？`)) return;
+
+            try {
+                const resp = await fetch(`/v1/subscribes/${email}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (resp.ok) {
+                    alert('取消订阅成功！');
+                    document.getElementById('unsubscribe-email').value = '';
+                } else {
+                    const data = await resp.json();
+                    alert('取消失败：' + (data.message || '未知错误'));
+                }
+            } catch (err) {
+                alert('取消失败：' + err.message);
+            }
+        });
+
+        // 用户管理 - 创建用户（仅管理员）
+        document.getElementById('create-user-btn').addEventListener('click', async function() {
+            if (!isAdmin) {
+                alert('无管理员权限！');
+                return;
+            }
+
+            const username = document.getElementById('create-username').value;
+            const password = document.getElementById('create-password').value;
+            if (!username || !password) {
+                alert('用户名和密码不能为空！');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/v1/users', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await resp.json();
+                
+                if (resp.ok) {
+                    alert('创建成功！');
+                    document.getElementById('create-username').value = '';
+                    document.getElementById('create-password').value = '';
+                } else {
+                    alert('创建失败：' + (data.message || '未知错误'));
+                }
+            } catch (err) {
+                alert('创建失败：' + err.message);
+            }
+        });
+
+        // 用户管理 - 查询用户列表（仅管理员）
+        document.getElementById('query-user-btn').addEventListener('click', async function() {
+            if (!isAdmin) {
+                alert('无管理员权限！');
+                return;
+            }
+
+            const offset = document.getElementById('user-offset').value || 0;
+            const limit = document.getElementById('user-limit').value || 10;
+            const params = new URLSearchParams();
+            params.append('offset', offset);
+            params.append('limit', limit);
+
+            try {
+                const resp = await fetch(`/v1/users?${params.toString()}`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await resp.json();
+                
+                if (resp.ok) {
+                    const resultEl = document.getElementById('user-result');
+                    if (data && data.items && data.items.length > 0) {
+                        let html = '<table class="table table-striped"><thead><tr><th>用户名</th><th>创建时间</th><th>是否管理员</th></tr></thead><tbody>';
+                        data.items.forEach(item => {
+                            html += `<tr>
+                                <td>${item.username || '-'}</td>
+                                <td>${item.createdAt || '-'}</td>
+                                <td>${item.isAdmin ? '是' : '否'}</td>
+                            </tr>`;
+                        });
+                        html += '</tbody></table>';
+                        resultEl.innerHTML = html;
+                    } else {
+                        resultEl.innerHTML = '<div class="alert alert-info">暂无用户数据</div>';
+                    }
+                } else {
+                    alert('查询失败：' + (data.message || '未知错误'));
+                }
+            } catch (err) {
+                alert('查询失败：' + err.message);
+            }
+        });
+
+        // 用户管理 - 删除用户（仅管理员）
+        document.getElementById('delete-user-btn').addEventListener('click', async function() {
+            if (!isAdmin) {
+                alert('无管理员权限！');
+                return;
+            }
+
+            const username = document.getElementById('delete-username').value;
+            if (!username) {
+                alert('请输入要删除的用户名！');
+                return;
+            }
+
+            if (!confirm(`确定要删除用户【${username}】吗？`)) return;
+
+            try {
+                const resp = await fetch(`/v1/users/${username}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (resp.ok) {
+                    alert('删除成功！');
+                    document.getElementById('delete-username').value = '';
+                } else {
+                    const data = await resp.json();
+                    alert('删除失败：' + (data.message || '未知错误'));
+                }
+            } catch (err) {
+                alert('删除失败：' + err.message);
+            }
+        });
+
+        // 通用提示函数
+        function showAlert(elId, msg) {
+            const el = document.getElementById(elId);
+            el.innerText = msg;
+            el.classList.remove('hidden');
+            setTimeout(() => el.classList.add('hidden'), 3000);
+        }
+    </script>
+</body>
+</html>

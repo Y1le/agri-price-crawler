@@ -31,7 +31,7 @@ func (p *prices) List(ctx context.Context, opts metav1.ListOptions) (*v1.PriceLi
 	if ol.Offset < 0 {
 		ol.Offset = 0
 	}
-	if ol.Limit <= 0 || ol.Limit > 100 {
+	if ol.Limit <= 0 || ol.Limit > 10 {
 		ol.Limit = 10
 	}
 	// CateName

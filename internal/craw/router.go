@@ -1,6 +1,9 @@
 package craw
 
 import (
+	"net/http"
+	"path/filepath"
+
 	"github.com/Y1le/agri-price-crawler/internal/craw/controller/hnprice"
 	"github.com/Y1le/agri-price-crawler/internal/craw/controller/subscribe"
 	"github.com/Y1le/agri-price-crawler/internal/craw/controller/user"
@@ -15,10 +18,22 @@ import (
 
 func initRouter(g *gin.Engine) {
 	installMiddleware(g)
+	installStaticRouter(g)
 	installController(g)
 }
 
 func installMiddleware(g *gin.Engine) {
+}
+
+func installStaticRouter(g *gin.Engine) {
+	// 1. 配置静态文件目录（存放HTML/CSS/JS）
+	g.Static("/static", "./static")
+	// 2. 根路径返回主页面
+	g.GET("/", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "index.html", nil)
+	})
+	// 3. 加载HTML模板（如果HTML放在templates目录）
+	g.LoadHTMLFiles(filepath.Join("templates", "index.html"))
 }
 
 func installController(g *gin.Engine) *gin.Engine {
@@ -70,7 +85,7 @@ func installController(g *gin.Engine) *gin.Engine {
 		{
 			subscribeController := subscribe.NewSubscribeController(storeIns)
 
-			subscribev1.Use(auto.AuthFunc(), middleware.Validation())
+			// subscribev1.Use(auto.AuthFunc(), middleware.Validation())
 			subscribev1.POST("", subscribeController.Create)
 			subscribev1.DELETE(":email", subscribeController.Delete)
 		}
