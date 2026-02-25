@@ -19,6 +19,6 @@
 ### Go Patch ###
 /vendor/
 /Godeps/
-/pb/
+/pb/*.pb.go
 .vscode/
 var/*
