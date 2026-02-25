@@ -1,28 +1,85 @@
-name: ci-test
+name: AgriPriceCrawlerCI
 
-on:
+# 触发规则：所有分支推送、标签推送、PR（打开/重新打开/同步）
+on: 
   push:
-    branches: [ main ]
+    branches:
+      - '*'          # 所有分支推送触发
+      - '!main'      # main分支单独处理（避免重复触发）
+    tags:
+      - 'v*'         # 版本标签推送（如v1.0.0）触发发布流程
   pull_request:
-    branches: [ main ]
+    types: [opened, reopened, synchronize]
+    branches: [main, develop]  # 仅监听主分支/开发分支的PR
+  workflow_dispatch:           # 支持手动触发CI
 
 jobs:
+  # 核心CI流程：测试、Lint、构建
+  craw_ci:
+    name: CI (Go-${{ matrix.go_version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false  # 一个矩阵失败不影响其他执行
+      matrix:
+        go_version: [1.24.3]  # 可扩展为 [1.23, 1.24.3] 多版本测试
+        os: [ubuntu-latest]   # 可扩展为 [ubuntu-latest, macos-latest]
+
     steps:
+      # 1. 拉取代码
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拉取完整提交历史（用于lint/版本判断）
 
-    - name: Set up Go 1.x
-      uses: actions/setup-go@v2
-      with:
-        go-version: ^1.24.3
-      id: go
+      # 2. 配置Go环境
+      - name: Set up Go ${{ matrix.go_version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go_version }}
+          cache: true     # 开启Go模块缓存，加速依赖下载
+          cache-dependency-path: go.sum
 
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
+      # 3. 缓存工具/依赖（减少重复安装）
+      - name: Cache tools and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+            $(go env GOPATH)/bin
+          key: ${{ runner.os }}-go-${{ matrix.go_version }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ matrix.go_version }}-
 
-    - name: Test
-      run: make test
+      # 4. 安装所有依赖工具（protoc/mockgen/lint等，一键完成）
+      - name: Install required tools
+        run: make tools
 
+      # 5. 整理Go依赖
+      - name: Tidy Go modules
+        run: make tidy
 
+      # 6. 生成代码（mock/proto/错误码等）
+      - name: Generate code (mock/proto)
+        run: make gen
+
+      # 7. 代码风格/语法检查
+      - name: Lint code
+        run: make lint
+
+      # 8. 单元测试+覆盖率
+      - name: Run unit test with coverage
+        run: make cover
+
+      # 9. 构建宿主平台二进制
+      - name: Build binary for host platform
+        run: make build
+
+      # 10. 上传覆盖率文件（便于后续分析）
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-go${{ matrix.go_version }}
+          path: _output/coverage.out
+          retention-days: 7  # 保留7天

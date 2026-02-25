@@ -1,35 +1,50 @@
-## test: Run unit test.
-.PHONY: test
-test: mock proto
-	go test -v -cover -short ./internal/...
+.DEFAULT_GOAL := all
 
-## cover: Run unit test and get test coverage.
-.PHONY: cover 
-cover: mock proto
-	@$(MAKE) go.test.cover
+# 引入子 Makefile
+include scripts/make-rules/common.mk
+include scripts/make-rules/tools.mk
+include scripts/make-rules/gen.mk
 
-.PHONY: go.test.cover
-go.test.cover:
-	go test -v -coverprofile=coverage.out ./internal/...
-	go tool cover -html=coverage.out -o coverage.html
+# 全量目标
+all: tidy gen lint cover build
 
+# 依赖整理
 .PHONY: tidy
 tidy:
-	go mod tidy
+	@echo "===========> Tidying go modules <==========="
+	$(GO) mod tidy
+	$(GO) mod verify
 
-.PHONY: server
-server:
-	go run cmd/craw-server/crawserver.go
+# 代码生成（入口）
+.PHONY: gen
+gen: gen.run
 
-.PHONY: redis
-redis:
-	docker run --name redis -p 6379:6379 -d redis:7-alpine
+# 代码lint
+.PHONY: lint
+lint: tools.verify
+	@echo "===========> Running golangci-lint <==========="
+	$(TOOLS_BIN_DIR)/golangci-lint run ./... --timeout 5m --fix
 
-.PHONY: mock
-mock:
-	go generate ./internal/ai/...
+# 测试覆盖率
+.PHONY: cover
+cover: gen
+	@echo "===========> Running tests with coverage <==========="
+	mkdir -p $(OUTPUT_DIR)
+	$(GO) test -v -coverprofile=$(COVERAGE_FILE) ./internal/...
+	$(GO) tool cover -html=$(COVERAGE_FILE) -o $(OUTPUT_DIR)/coverage.html
 
+# 构建
+.PHONY: build
+build:
+	@echo "===========> Building craw-server binary <==========="
+	mkdir -p $(OUTPUT_DIR)
+	$(GO) build -o $(OUTPUT_DIR)/craw-server $(ROOT_PACKAGE)/cmd/craw-server
 
-.PHONY: proto
-proto:
-	protoc --proto_path=proto/v1 --go_out=pb --go_opt=paths=source_relative --go-grpc_out=pb --go-grpc_opt=paths=source_relative proto/v1/*.proto
+# 工具安装（入口）
+.PHONY: tools
+tools: tools.install tools.env
+
+# 帮助信息
+.PHONY: help
+help:
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z0-9_-]+:.*?##/ { printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
