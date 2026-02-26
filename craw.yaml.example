@@ -97,7 +97,7 @@ email:
 
 # https://doubao.apifox.cn/ Go to this website to get the api-key and base-url
 doubao:
-  api-key: "1cbc28e7-4585-44db-be9d-73aabd08c5ff"
+  api-key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   base-url: "https://ark.cn-beijing.volces.com/api/v3"
   timeout-sec: 60
   max-retries: 3
