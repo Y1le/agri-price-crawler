@@ -26,7 +26,7 @@ func (s *SubscribeController) Create(c *gin.Context) {
 
 		return
 	}
-
+	r.Name = c.GetString("username")
 	if err := s.srv.Subscribes().Create(c, &r, metav1.CreateOptions{}); err != nil {
 		core.WriteResponse(c, err, nil)
 

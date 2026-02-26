@@ -27,6 +27,11 @@ func newSubscribe(srv *service) *subscribeService {
 }
 
 func (s *subscribeService) Create(ctx context.Context, subscribe *v1.Subscribe, opts metav1.CreateOptions) error {
+	user, err := s.store.Users().Get(ctx, subscribe.Name, metav1.GetOptions{})
+	if err != nil {
+		return errors.Errorf("%d: %s", code.ErrUserNotFound, err.Error())
+	}
+	subscribe.InstanceID = user.InstanceID
 	if err := s.store.Subscribes().Create(ctx, subscribe, opts); err != nil {
 		return errors.Errorf("%d: %s", code.ErrDatabase, err.Error())
 	}

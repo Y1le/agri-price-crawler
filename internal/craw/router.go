@@ -85,7 +85,7 @@ func installController(g *gin.Engine) *gin.Engine {
 		{
 			subscribeController := subscribe.NewSubscribeController(storeIns)
 
-			// subscribev1.Use(auto.AuthFunc(), middleware.Validation())
+			subscribev1.Use(auto.AuthFunc(), middleware.Validation())
 			subscribev1.POST("", subscribeController.Create)
 			subscribev1.DELETE(":email", subscribeController.Delete)
 		}

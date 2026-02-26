@@ -123,7 +123,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">密码（password）</label>
-                            <input type="password" id="register-password" class="form-control" placeholder="请输入密码">
+                            <input type="password" id="register-password" class="form-control" placeholder="请输入密码（必须包含至少一个特殊符号,大写字母,小写字母,数字，长度为10-20位）">
                         </div>
                         <div id="register-alert" class="alert alert-danger hidden"></div>
                     </div>
@@ -379,7 +379,7 @@
                                 <td>${item.AvgPrice || '-'}</td>
                                 <td>${item.Unit || '-'}</td>
                                 <td>${item.AddressDetail || '-'}</td>
-                                <td>${item.CreatedAt || '-'}</td>
+                                <td>${item.createdAt || '-'}</td>
                             </tr>`;
                         });
                         html += '</tbody></table>';

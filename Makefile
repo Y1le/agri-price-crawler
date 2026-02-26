@@ -27,7 +27,7 @@ lint: tools.verify
 
 # 测试覆盖率
 .PHONY: cover
-cover: gen
+cover: tidy gen
 	@echo "===========> Running tests with coverage <==========="
 	mkdir -p $(OUTPUT_DIR)
 	$(GO) test -v -coverprofile=$(COVERAGE_FILE) ./internal/...
@@ -35,7 +35,7 @@ cover: gen
 
 # 构建
 .PHONY: build
-build:
+build: tidy gen
 	@echo "===========> Building craw-server binary <==========="
 	mkdir -p $(OUTPUT_DIR)
 	$(GO) build -o $(OUTPUT_DIR)/craw-server $(ROOT_PACKAGE)/cmd/craw-server
@@ -43,6 +43,13 @@ build:
 # 工具安装（入口）
 .PHONY: tools
 tools: tools.install tools.env
+
+
+.PHONY: docker-build
+docker-build: tidy gen
+	@echo "===========> Building craw-server for docker <==========="
+	mkdir -p $(OUTPUT_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -ldflags="-s -w" -o $(OUTPUT_DIR)/craw-server $(ROOT_PACKAGE)/cmd/craw-server
 
 # 帮助信息
 .PHONY: help
