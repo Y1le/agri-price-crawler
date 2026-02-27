@@ -27,18 +27,18 @@ lint: tools.verify
 
 # 测试覆盖率
 .PHONY: cover
-cover: tidy gen
+cover: 
 	@echo "===========> Running tests with coverage <==========="
-	mkdir -p $(OUTPUT_DIR)
+	@mkdir -p $(OUTPUT_DIR)/coverage
 	$(GO) test -v -coverprofile=$(COVERAGE_FILE) ./internal/...
-	$(GO) tool cover -html=$(COVERAGE_FILE) -o $(OUTPUT_DIR)/coverage.html
+	$(GO) tool cover -html=$(COVERAGE_FILE) -o $(OUTPUT_DIR)/coverage/coverage.html
 
 # 构建
 .PHONY: build
-build: tidy gen
+build: 
 	@echo "===========> Building craw-server binary <==========="
-	mkdir -p $(OUTPUT_DIR)
-	$(GO) build -o $(OUTPUT_DIR)/craw-server $(ROOT_PACKAGE)/cmd/craw-server
+	@mkdir -p $(OUTPUT_DIR)/platforms
+	$(GO) build -o $(OUTPUT_DIR)/platforms/craw-server $(ROOT_PACKAGE)/cmd/craw-server
 
 # 工具安装（入口）
 .PHONY: tools
@@ -48,8 +48,8 @@ tools: tools.install tools.env
 .PHONY: docker-build
 docker-build: tidy gen
 	@echo "===========> Building craw-server for docker <==========="
-	mkdir -p $(OUTPUT_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -ldflags="-s -w" -o $(OUTPUT_DIR)/craw-server $(ROOT_PACKAGE)/cmd/craw-server
+	@mkdir -p $(OUTPUT_DIR)/platforms
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -ldflags="-s -w" -o $(OUTPUT_DIR)/platforms/craw-server $(ROOT_PACKAGE)/cmd/craw-server
 
 # 帮助信息
 .PHONY: help

@@ -20,5 +20,6 @@
 /vendor/
 /Godeps/
 /pb/*.pb.go
+/_output/
 .vscode/
 var/*

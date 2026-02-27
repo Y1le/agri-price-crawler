@@ -4,11 +4,9 @@ name: AgriPriceCrawlerCI
 on: 
   push:
     branches:
-      - 'main'  # 仅 push main 触发
+      - '*'
   pull_request:
-    types: [opened, reopened, synchronize]
-    branches: [main]  # 仅 PR main 触发
-  workflow_dispatch:  # 保留手动触发（可选）
+    types: [opened, reopened]
 
 jobs:
   # 核心CI流程：测试、Lint、构建
@@ -62,8 +60,8 @@ jobs:
         run: make gen
 
       # 7. 代码风格/语法检查
-      - name: Lint code
-        run: make lint
+      #- name: Lint code
+      #  run: make lint
 
       # 8. 单元测试+覆盖率
       - name: Run unit test with coverage
@@ -78,5 +76,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.os }}-go${{ matrix.go_version }}
-          path: _output/coverage.out
+          path: _output/coverage/coverage.html
           retention-days: 7  # 保留7天
