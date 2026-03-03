@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gofmt -w {{filePath}}", 
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '✅ 爬虫项目环境检查：' && go mod tidy"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(gofmt*)",
+      "Bash(go mod*)",
+      "Bash(go test*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Bash(rm*)",
+      "Bash(mv*)",
+      "Read(./craw.yaml)"
+    ]
+  },
+  "env": {
+    "CLAUDE_FLOW_HOOKS_ENABLED": "true"
+  }
+}
