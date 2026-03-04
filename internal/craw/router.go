@@ -8,6 +8,7 @@ import (
 	"github.com/Y1le/agri-price-crawler/internal/craw/controller/subscribe"
 	"github.com/Y1le/agri-price-crawler/internal/craw/controller/user"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store/mysql"
+	"github.com/Y1le/agri-price-crawler/internal/pkg/alert"
 	"github.com/Y1le/agri-price-crawler/internal/pkg/code"
 	"github.com/Y1le/agri-price-crawler/internal/pkg/middleware"
 	"github.com/Y1le/agri-price-crawler/internal/pkg/middleware/auth"
@@ -16,13 +17,24 @@ import (
 	"github.com/marmotedu/errors"
 )
 
-func initRouter(g *gin.Engine) {
-	installMiddleware(g)
+func initRouter(g *gin.Engine, alertServer *alert.Server) {
+	installMiddleware(g, alertServer)
 	installStaticRouter(g)
-	installController(g)
+	installController(g, alertServer)
 }
 
-func installMiddleware(g *gin.Engine) {
+func installMiddleware(g *gin.Engine, alertServer *alert.Server) {
+	// Prometheus metrics middleware needs to be wrapped for gin
+	if alertServer != nil {
+		// Use a wrapper to integrate HTTP middleware with gin
+		g.Use(func(c *gin.Context) {
+			// Pass through middleware
+			nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				c.Next()
+			})
+			alertServer.MetricsMiddleware()(nextHandler).ServeHTTP(c.Writer, c.Request)
+		})
+	}
 }
 
 func installStaticRouter(g *gin.Engine) {
@@ -36,7 +48,7 @@ func installStaticRouter(g *gin.Engine) {
 	g.LoadHTMLFiles(filepath.Join("templates", "index.html"))
 }
 
-func installController(g *gin.Engine) *gin.Engine {
+func installController(g *gin.Engine, alertServer *alert.Server) *gin.Engine {
 	// Middlewares
 	jwtStrategy, _ := newJWTAuth().(auth.JWTStrategy)
 	g.POST("/login", jwtStrategy.LoginHandler)
@@ -89,6 +101,14 @@ func installController(g *gin.Engine) *gin.Engine {
 			subscribev1.POST("", subscribeController.Create)
 			subscribev1.DELETE(":email", subscribeController.Delete)
 		}
+	}
+
+	// Add alert server metrics endpoint
+	if alertServer != nil {
+		g.GET("/health/alerts", func(c *gin.Context) {
+			status := alertServer.GetStatus()
+			c.JSON(http.StatusOK, status)
+		})
 	}
 
 	return g

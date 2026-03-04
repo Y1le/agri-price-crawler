@@ -6,13 +6,16 @@ import (
 
 	"github.com/Y1le/agri-price-crawler/internal/ai"
 	"github.com/Y1le/agri-price-crawler/internal/ai/doubao"
-	"github.com/Y1le/agri-price-crawler/internal/craw/config"
+	crawconfig "github.com/Y1le/agri-price-crawler/internal/craw/config"
 	"github.com/Y1le/agri-price-crawler/internal/craw/gapi"
 	mailer "github.com/Y1le/agri-price-crawler/internal/craw/mailer"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store"
 	"github.com/Y1le/agri-price-crawler/internal/craw/store/mysql"
 	genericoptions "github.com/Y1le/agri-price-crawler/internal/pkg/options"
 	genericcrawserver "github.com/Y1le/agri-price-crawler/internal/pkg/server"
+	"github.com/Y1le/agri-price-crawler/internal/pkg/alert"
+	alertconfig "github.com/Y1le/agri-price-crawler/internal/pkg/alert/config"
+	"github.com/Y1le/agri-price-crawler/internal/pkg/alert/metrics"
 	"github.com/Y1le/agri-price-crawler/pb"
 	"github.com/Y1le/agri-price-crawler/pkg/log"
 	shutdown "github.com/Y1le/agri-price-crawler/pkg/shutdown"
@@ -34,6 +37,8 @@ type crawServer struct {
 
 	emailOptions  *genericoptions.EmailOptions
 	doubaoOptions *genericoptions.DoubaoOptions
+	alertOptions  *genericoptions.AlertOptions
+	alertServer   *alert.Server
 }
 
 type preparedCrawServer struct {
@@ -49,7 +54,7 @@ type ExtraConfig struct {
 	// etcdOptions      *genericoptions.EtcdOptions
 }
 
-func createCRAWServer(cfg *config.Config) (*crawServer, error) {
+func createCRAWServer(cfg *crawconfig.Config) (*crawServer, error) {
 	gs := shutdown.New()
 	gs.AddShutdownManager(posixsignal.NewPosixSignalManager())
 
@@ -81,13 +86,14 @@ func createCRAWServer(cfg *config.Config) (*crawServer, error) {
 		genericCrawServer: genericServer,
 		emailOptions:      cfg.EmailOptions,
 		doubaoOptions:     cfg.DoubaoOptions,
+		alertOptions:      cfg.AlertOptions,
 	}
 
 	return server, nil
 }
 
 func (s *crawServer) PrepareRun() preparedCrawServer {
-	initRouter(s.genericCrawServer.Engine)
+	initRouter(s.genericCrawServer.Engine, s.alertServer)
 
 	storeIns, err := mysql.GetMySQLFactoryOr(s.mysqlOptions)
 	if err != nil {
@@ -104,6 +110,8 @@ func (s *crawServer) PrepareRun() preparedCrawServer {
 	if err != nil {
 		log.Fatalf("failed to initialize Doubao factory: %v", err)
 	}
+	// init alert server
+	s.initAlertServer()
 	s.initCronTask()
 
 	s.gRPCServer.Run()
@@ -118,6 +126,11 @@ func (s *crawServer) PrepareRun() preparedCrawServer {
 		}
 
 		s.genericCrawServer.Close()
+
+		// shutdown alert server
+		if s.alertServer != nil {
+			_ = s.alertServer.Shutdown()
+		}
 
 		return nil
 	}))
@@ -134,7 +147,7 @@ func (s preparedCrawServer) Run() error {
 	return s.genericCrawServer.Run()
 }
 
-func buildGenericConfig(cfg *config.Config) (genericConfig *genericcrawserver.Config, lastErr error) {
+func buildGenericConfig(cfg *crawconfig.Config) (genericConfig *genericcrawserver.Config, lastErr error) {
 	genericConfig = genericcrawserver.NewConfig()
 	if lastErr = cfg.GenericServerRunOptions.ApplyTo(genericConfig); lastErr != nil {
 		return
@@ -155,7 +168,7 @@ func buildGenericConfig(cfg *config.Config) (genericConfig *genericcrawserver.Co
 	return
 }
 
-func buildExtraConfig(cfg *config.Config) (*ExtraConfig, error) {
+func buildExtraConfig(cfg *crawconfig.Config) (*ExtraConfig, error) {
 	return &ExtraConfig{
 		Addr:         cfg.GRPCOptions.BindAddress + ":" + strconv.Itoa(cfg.GRPCOptions.BindPort), // 从配置中读取 gRPC 地址
 		MaxMsgSize:   cfg.GRPCOptions.MaxMsgSize,                                                 // 从配置中读取最大消息大小
@@ -201,7 +214,60 @@ func (s *crawServer) initmailer() {
 		Password: s.emailOptions.Password,
 		From:     s.emailOptions.From,
 	}
+}
 
+func (s *crawServer) initAlertServer() {
+	if !s.alertOptions.Enabled {
+		log.Info("Alert server disabled")
+		return
+	}
+
+	// Create alert config
+	alertConfig := &alertconfig.AlertConfig{
+		Enabled:            true,
+		EvaluationInterval: s.alertOptions.EvaluationInterval,
+		Thresholds: alertconfig.Thresholds{
+			PriceSpikePercent:    s.alertOptions.PriceSpikePercent,
+			PriceSpikeAbsolute:   s.alertOptions.PriceSpikeAbsolute,
+			PriceDropPercent:     s.alertOptions.PriceDropPercent,
+			PriceDropAbsolute:    s.alertOptions.PriceDropAbsolute,
+			VolatilityIndex:      s.alertOptions.VolatilityIndex,
+			DataMissingHours:     s.alertOptions.DataMissingHours,
+		},
+		Email: alertconfig.EmailConfig{
+			Host:       s.alertOptions.Email.Host,
+			Port:       s.alertOptions.Email.Port,
+			Username:   s.alertOptions.Email.Username,
+			Password:   s.alertOptions.Email.Password,
+			From:       s.alertOptions.Email.From,
+			Recipients: []string{}, // TODO: add recipients from options if needed
+		},
+		WatchList: func() []alertconfig.WatchItem {
+			items := make([]alertconfig.WatchItem, len(s.alertOptions.WatchList))
+			for i, name := range s.alertOptions.WatchList {
+				items[i].Name = name
+			}
+			return items
+		}(),
+	}
+
+	// Create metrics collector for alert server
+	metricsCollector := metrics.NewCollector(alertConfig)
+
+	server, err := alert.NewServer(alertConfig, metricsCollector)
+	if err != nil {
+		log.Fatalf("failed to initialize alert server: %v", err)
+	}
+
+	s.alertServer = server
+
+	// Start alert server
+	ctx := context.Background()
+	if err := server.Run(ctx); err != nil {
+		log.Fatalf("failed to run alert server: %v", err)
+	}
+
+	log.Info("Alert server initialized successfully")
 }
 
 type completedExtraConfig struct {

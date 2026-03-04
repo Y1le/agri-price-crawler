@@ -24,6 +24,7 @@ type Options struct {
 	FeatureOptions          *genericoptions.FeatureOptions         `json:"feature"  mapstructure:"feature"`
 	EmailOptions            *genericoptions.EmailOptions           `json:"email"      mapstructure:"email"`
 	DoubaoOptions           *genericoptions.DoubaoOptions          `json:"doubao"     mapstructure:"doubao"`
+	AlertOptions            *genericoptions.AlertOptions          `json:"alert"      mapstructure:"alert"`
 }
 
 // NewOptions creates a new Options object with default parameters.
@@ -37,6 +38,7 @@ func NewOptions() *Options {
 		Log:            log.NewOptions(),
 		EmailOptions:   genericoptions.NewEmailOptions(),
 		DoubaoOptions:  genericoptions.NewDoubaoOptions(),
+		AlertOptions:   genericoptions.NewAlertOptions(),
 	}
 
 	return &o
@@ -52,6 +54,7 @@ func (o *Options) Flags() (fss cliflag.NamedFlagSets) {
 	o.GRPCOptions.AddFlags(fss.FlagSet("grpc"))
 	o.EmailOptions.AddFlags(fss.FlagSet("email"))
 	o.DoubaoOptions.AddFlags(fss.FlagSet("doubao"))
+	o.AlertOptions.AddFlags(fss.FlagSet("alert"))
 
 	return fss
 }
