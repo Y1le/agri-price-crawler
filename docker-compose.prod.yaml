@@ -1,0 +1,119 @@
+version: '3.9'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: agri-price-crawler-mysql-prod
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-craw}
+      MYSQL_USER: ${MYSQL_USER:-craw_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data_prod:/var/lib/mysql
+      - ./configs/craw.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - agri_network_prod
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  redis:
+    image: redis:7-alpine
+    container_name: agri-price-crawler-redis-prod
+    restart: always
+    command: >
+      redis-server --appendonly yes
+      --requirepass "$${REDIS_PASSWORD}"
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - redis_data_prod:/data
+    networks:
+      - agri_network_prod
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 20s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agri-price-crawler-app-prod
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - CRAW_MYSQL_HOST=mysql:3306
+      - CRAW_MYSQL_USERNAME=${MYSQL_USER}
+      - CRAW_MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - CRAW_MYSQL_DATABASE=${MYSQL_DATABASE}
+      - CRAW_REDIS_HOST=redis
+      - CRAW_REDIS_PORT=6379
+      - CRAW_REDIS_PASSWORD=${REDIS_PASSWORD}
+      - CRAW_JWT_KEY=${JWT_KEY}
+      - CRAW_CRAWLER_DEVICE_ID=${CRAWLER_DEVICE_ID}
+      - CRAW_CRAWLER_SECRET=${CRAWLER_SECRET}
+      - CRAW_DOUBAO_API_KEY=${DOUBAO_API_KEY}
+      - CRAW_EMAIL_HOST=${EMAIL_HOST}
+      - CRAW_EMAIL_PORT=${EMAIL_PORT}
+      - CRAW_EMAIL_USERNAME=${EMAIL_USERNAME}
+      - CRAW_EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - CRAW_EMAIL_FROM=${EMAIL_FROM}
+      - CRAW_SERVER_MODE=release
+      - CRAW_LOG_LEVEL=info
+      - CRAW_LOG_FORMAT=json
+    volumes:
+      - ./var:/app/var
+      - ./.env:/app/.env:ro
+      - ./craw.pem:/app/craw.pem:ro
+      - ./craw-key.pem:/app/craw-key.pem:ro
+    networks:
+      - agri_network_prod
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.75'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+
+volumes:
+  mysql_data_prod:
+  redis_data_prod:
+
+networks:
+  agri_network_prod:

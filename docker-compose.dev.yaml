@@ -1,0 +1,51 @@
+version: '3.9'
+
+services:
+  mysql:
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-craw}
+      MYSQL_USER: ${MYSQL_USER:-craw_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-craw_pass}
+    ports:
+      - "3306:3306"  # Expose in dev only
+    volumes:
+      - ./configs/craw.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: "no"  # Don't restart automatically in dev
+
+  redis:
+    command: redis-server --requirepass ${REDIS_PASSWORD:-123456}
+    ports:
+      - "6379:6379"  # Expose in dev only
+    restart: "no"  # Don't restart automatically in dev
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - CRAW_MYSQL_HOST=mysql:3306
+      - CRAW_MYSQL_USERNAME=${MYSQL_USER:-craw_user}
+      - CRAW_MYSQL_PASSWORD=${MYSQL_PASSWORD:-craw_pass}
+      - CRAW_MYSQL_DATABASE=${MYSQL_DATABASE:-craw}
+      - CRAW_REDIS_HOST=redis
+      - CRAW_REDIS_PORT=6379
+      - CRAW_REDIS_PASSWORD=${REDIS_PASSWORD:-123456}
+      - CRAW_JWT_KEY=${JWT_KEY:-very_secure_dev_key_for_testing_only}
+      - CRAW_CRAWLER_DEVICE_ID=${CRAWLER_DEVICE_ID:-dev_device_id}
+      - CRAW_CRAWLER_SECRET=${CRAWLER_SECRET:-dev_secret}
+      - CRAW_DOUBAO_API_KEY=${DOUBAO_API_KEY}
+      - CRAW_EMAIL_HOST=${EMAIL_HOST:-smtp.gmail.com}
+      - CRAW_EMAIL_PORT=${EMAIL_PORT:-587}
+      - CRAW_EMAIL_USERNAME=${EMAIL_USERNAME}
+      - CRAW_EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - CRAW_EMAIL_FROM=${EMAIL_FROM}
+      - CRAW_SERVER_MODE=debug  # Debug mode in dev
+      - CRAW_LOG_LEVEL=debug  # More verbose logging in dev
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    volumes:
+      - ./var:/app/var
+      - ./.env:/app/.env:ro
+      - ./docker-craw.yaml:/app/config.yaml:ro  # Mount config file
+    restart: "no"  # Don't restart automatically in dev

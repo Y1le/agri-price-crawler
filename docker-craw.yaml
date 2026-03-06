@@ -1,0 +1,106 @@
+# Craw server configuration optimized for Docker
+# Note: Sensitive configuration values are loaded from environment variables via viper
+
+# RESTful 服务配置
+server:
+  mode: release # server mode: release, debug, test, 默认 release
+  healthz: true # 是否开启健康检查，如果开启会安装 /healthz 路由，默认 true
+  middlewares: recovery,logger,secure,nocache,cors,dump # 加载的 gin 中间件列表，多个中间件，逗号(,)隔开
+  max-ping-count: 3 # http 服务启动后，自检尝试次数，默认 3
+
+# GRPC 服务配置
+grpc:
+  bind-address: 0.0.0.0 # grpc 安全模式的 IP 地址，默认 0.0.0.0
+  bind-port: 8081 # grpc 安全模式的端口号，默认 8081
+
+# HTTP 配置
+insecure:
+  bind-address: 0.0.0.0 # 绑定的不安全 IP 地址，设置为 0.0.0.0 表示使用全部网络接口，默认为 127.0.0.1
+  bind-port: 8080 # 提供非安全认证的监听端口，默认为 8080
+
+# HTTPS 配置
+secure:
+  bind-address: 0.0.0.0 # HTTPS 安全模式的 IP 地址，默认为 0.0.0.0
+  bind-port: 8443 # 使用 HTTPS 安全模式的端口号，设置为 0 表示不启用 HTTPS，默认为 8443
+  tls:
+    #cert-dir: .crawserver/cert # TLS 证书所在的目录，默认值为 /var/run/crawserver
+    #pair-name: crawserver # TLS 私钥对名称，默认 crawserver
+    cert-key:
+      cert-file: ./craw.pem  # 包含 x509 证书的文件路径，用 HTTPS 认证
+      private-key-file: ./craw-key.pem # TLS 私钥
+
+# MySQL 数据库相关配置
+mysql:
+  host: liam-mysql:3306 # MySQL 机器 ip 和端口，Docker 环境下使用服务名
+  username: root # MySQL 用户名(建议授权最小权限集)
+  password: "" # MySQL 用户密码 (将从环境变量加载)
+  database: craw # 系统所用的数据库名
+  max-idle-connections: 100 # MySQL 最大空闲连接数，默认 100
+  max-open-connections: 100 # MySQL 最大打开的连接数，默认 100
+  max-connection-life-time: 10s # 空闲连接最大存活时间，默认 10s
+  log-level: 4 # GORM log level, 1: silent, 2:error, 3:warn, 4:info
+
+# Redis 配置
+redis:
+  host: liam-redis # redis 地址，默认为 Docker 服务名
+  port: 6379 # redis 端口，默认 6379
+  password: "" # redis 密码 (将从环境变量加载)
+  # addrs:
+  # master-name: # redis 集群 master 名称
+  # username: # redis 登录用户名
+  # database: # redis 数据库
+  # optimisation-max-idle:  # redis 连接池中的最大空闲连接数
+  # optimisation-max-active: # 最大活跃连接数
+  # timeout: # 连接 redis 时的超时时间
+  # enable-cluster: # 是否开启集群模式
+  # use-ssl: # 是否启用 TLS
+  # ssl-insecure-skip-verify: # 当连接 redis 时允许使用自签名证书
+
+# JWT 配置
+jwt:
+  realm: JWT # jwt 标识
+  key: "" # 服务端密钥 (将从环境变量加载，非常重要!)
+  timeout: 24h # token 过期时间(小时)
+  max-refresh: 24h # token 更新时间(小时)
+
+log:
+  name: crawserver # Logger的名字
+  development: false # 生产环境下应设为 false
+  level: info # 日志级别，优先级从低到高依次为：debug, info, warn, error, dpanic, panic, fatal。
+  format: json # 支持的日志输出格式，目前支持console和json两种。生产环境推荐json格式
+  enable-color: false # 生产环境通常不需要颜色输出
+  disable-caller: false # 是否开启 caller，如果开启会在日志中显示调用日志所在的文件、函数和行号
+  disable-stacktrace: false # 是否再panic及以上级别禁止打印堆栈信息
+  output-paths: /app/var/crawserver.log,stdout # 支持输出到多个输出，逗号分开。支持输出到标准输出（stdout）和文件。
+  error-output-paths: /app/var/crawserver.error.log # zap内部(非业务)错误日志输出路径，多个输出，逗号分开
+
+feature:
+  enable-metrics: true # 开启 metrics, router:  /metrics
+  profiling: false # 生产环境下性能分析通常关闭
+
+cron:
+  enable-daily-craw-sender: true
+  enable-daily-email-sender: true
+  daily-email-time: "0 7 * * *" # 每天7点发送邮件
+  daily-craw-times: "0 4 * * *" # 每天4点开始爬取数据
+
+crawler:
+  device-id: "" # 设备ID (将从环境变量加载)
+  secret: "" # 密钥 (将从环境变量加载)
+
+email:
+  host: smtp.gmail.com
+  port: 587
+  username: ""
+  password: ""
+  from: ""
+
+doubao:
+  api-key: "" # 豆包API密钥 (将从环境变量加载)
+  base-url: "https://ark.cn-beijing.volces.com/api/v3"
+  timeout-sec: 120
+  max-retries: 3
+  model: "doubao-seed-2-0-pro-260215"
+
+alert:
+  webhook-url: ""

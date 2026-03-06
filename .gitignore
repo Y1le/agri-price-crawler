@@ -1,5 +1,5 @@
 *.pem
-*.yaml
+.env
 ### Go ###
 # Binaries for programs and plugins
 *.exe
