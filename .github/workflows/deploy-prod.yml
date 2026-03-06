@@ -1,0 +1,122 @@
+name: Deploy to Production
+
+# 触发规则：推送到 main 或 master 分支时部署到生产环境
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:  # 手动触发选项
+
+jobs:
+  deploy-prod:
+    name: Deploy to Production Environment
+    runs-on: ubuntu-latest
+    environment: production  # 使用 GitHub 环境保护规则
+    needs: deploy-dev  # 确保先在开发环境测试
+
+    steps:
+      # 1. 拉取代码
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. 设置 Go 环境
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.3
+          cache: true
+          cache-dependency-path: go.sum
+
+      # 3. 运行额外的安全扫描
+      - name: Security scan
+        run: |
+          # Run govulncheck for security vulnerabilities
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          $(go env GOPATH)/bin/govulncheck ./...
+
+      # 4. 构建生产 Docker 镜像
+      - name: Build production Docker image
+        run: |
+          make docker-build
+
+      # 5. 登录 Docker Registry
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # 6. 构建并标记生产镜像
+      - name: Build and tag production Docker image
+        run: |
+          DOCKER_BUILDKIT=1 docker build -t agri-price-crawler:${{ github.sha }} .
+          docker tag agri-price-crawler:${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:${{ github.sha }}
+          docker tag agri-price-crawler:${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:latest
+          docker tag agri-price-crawler:${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:prod-$(date +%Y%m%d)-${{ github.sha }}
+
+      # 7. 推送镜像到仓库
+      - name: Push Docker images
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:${{ github.sha }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:prod-$(date +%Y%m%d)-${{ github.sha }}
+
+      # 8. 部署到生产环境
+      - name: Deploy to Production Server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PROD_SERVER_HOST }}
+          username: ${{ secrets.PROD_SERVER_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            cd ~/agri-price-crawler-prod
+            git pull origin main
+            # Pull the latest image
+            docker pull ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:${{ github.sha }}
+            # Stop current container
+            docker stop agri-price-crawler-prod || true
+            docker rm agri-price-crawler-prod || true
+            # Run new container with production configuration
+            docker run -d --name agri-price-crawler-prod \
+              --env-file .env.prod \
+              -p 80:8080 \
+              --restart unless-stopped \
+              --health-cmd="curl -f http://localhost:8080/health || exit 1" \
+              --health-interval=30s \
+              --health-timeout=10s \
+              --health-retries=3 \
+              ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:${{ github.sha }}
+
+      # 9. 验证部署
+      - name: Verify deployment
+        run: |
+          # Wait for service to be ready and test health endpoint
+          sleep 30
+          curl -f http://${{ secrets.PROD_SERVER_HOST }} || echo "Health check failed"
+
+      # 10. 发送通知
+      - name: Send notification to Slack
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: '🚀 Production deployment completed! Version: ${{ github.sha }}'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 11. Create GitHub Release
+      - name: Create GitHub Release
+        if: ${{ github.ref == 'refs/heads/main' }}
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.sha }}
+          release_name: Release ${{ github.sha }}
+          draft: false
+          prerelease: false

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"github.com/subosito/gotenv"
 )
 
 const configFlagName = "config"
@@ -27,6 +28,9 @@ func init() {
 // object.
 func addConfigFlag(basename string, fs *pflag.FlagSet) {
 	fs.AddFlag(pflag.Lookup(configFlagName))
+
+	// Load .env file if it exists
+	gotenv.Load()
 
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix(strings.Replace(strings.ToUpper(basename), "-", "_", -1))

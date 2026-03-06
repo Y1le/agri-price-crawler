@@ -1,0 +1,83 @@
+name: Deploy to Development
+
+# 触发规则：推送到 develop 分支时自动部署到开发环境
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  deploy-dev:
+    name: Deploy to Development Environment
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 拉取代码
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. 设置 Go 环境
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.3
+          cache: true
+          cache-dependency-path: go.sum
+
+      # 3. 构建 Docker 镜像
+      - name: Build Docker image
+        run: |
+          make docker-build
+
+      # 4. 登录 Docker Registry (可选，如果需要推送到私有仓库)
+      - name: Login to DockerHub
+        if: ${{ secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # 5. 构建并标记镜像
+      - name: Build and tag Docker image
+        run: |
+          DOCKER_BUILDKIT=1 docker build -t agri-price-crawler:dev-${{ github.sha }} .
+          docker tag agri-price-crawler:dev-${{ github.sha }} ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:dev-${{ github.sha }}
+
+      # 6. 推送镜像到仓库 (如果配置了 Docker Hub)
+      - name: Push Docker image
+        if: ${{ secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '' }}
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/agri-price-crawler:dev-${{ github.sha }}
+
+      # 7. 部署到开发环境
+      - name: Deploy to Development Server
+        if: ${{ secrets.DEV_SERVER_HOST != '' }}
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.DEV_SERVER_HOST }}
+          username: ${{ secrets.DEV_SERVER_USER }}
+          key: ${{ secrets.DEV_SSH_KEY }}
+          script: |
+            cd ~/agri-price-crawler
+            git pull origin develop
+            docker build -t agri-price-crawler:latest .
+            docker stop agri-price-crawler-dev || true
+            docker rm agri-price-crawler-dev || true
+            docker run -d --name agri-price-crawler-dev \
+              --env-file .env \
+              -p 8080:8080 \
+              --restart unless-stopped \
+              agri-price-crawler:latest
+
+      # 8. 发送通知
+      - name: Send notification to Slack
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: '✅ Development deployment completed!'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

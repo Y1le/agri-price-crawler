@@ -4,7 +4,12 @@
       "Bash(go test:*)",
       "Bash(go mod:*)",
       "Bash(go build:*)",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "Bash(go run:*)",
+      "Bash(make build:*)",
+      "Bash(make lint:*)",
+      "Bash(make tools:*)",
+      "Bash(go install:*)"
     ]
   }
 }

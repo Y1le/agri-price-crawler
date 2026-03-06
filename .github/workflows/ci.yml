@@ -1,12 +1,12 @@
 name: AgriPriceCrawlerCI
 
 # 触发规则：所有分支推送、标签推送、PR（打开/重新打开/同步）
-on: 
+on:
   push:
     branches:
       - '*'
   pull_request:
-    types: [opened, reopened]
+    types: [opened, synchronize, reopened]
 
 jobs:
   # 核心CI流程：测试、Lint、构建
@@ -60,8 +60,8 @@ jobs:
         run: make gen
 
       # 7. 代码风格/语法检查
-      #- name: Lint code
-      #  run: make lint
+      - name: Lint code
+        run: make lint
 
       # 8. 单元测试+覆盖率
       - name: Run unit test with coverage
@@ -71,10 +71,23 @@ jobs:
       - name: Build binary for host platform
         run: make build
 
-      # 10. 上传覆盖率文件（便于后续分析）
+      # 10. 构建 Docker 镜像并测试
+      - name: Build Docker image
+        run: |
+          make docker-build
+
+      # 11. 上传覆盖率文件（便于后续分析）
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.os }}-go${{ matrix.go_version }}
           path: _output/coverage/coverage.html
           retention-days: 7  # 保留7天
+
+      # 12. 上传构建产物
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.os }}-go${{ matrix.go_version }}
+          path: _output/
+          retention-days: 7

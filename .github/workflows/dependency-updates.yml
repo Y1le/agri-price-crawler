@@ -1,0 +1,41 @@
+name: Dependency Updates
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # 每周一凌晨2点运行
+  workflow_dispatch:  # 手动触发
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-deps:
+    name: Update Dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.3
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Update Go dependencies
+        run: |
+          go get -u ./...
+          go mod tidy
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore(deps): update Go dependencies'
+          title: 'Update Go dependencies'
+          body: 'Automated dependency updates'
+          branch: chore/update-go-deps
+          assignees: ${{ github.actor }}

@@ -1,24 +1,54 @@
+# Build stage
+FROM golang:1.24-alpine AS builder
 
-#build stage
-FROM golang:1.25-alpine AS builder
+# Install git for Go modules and ca-certificates for secure connections
+RUN apk add --no-cache git ca-certificates
+
 WORKDIR /app
+
+# Copy go mod files first to leverage Docker cache
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
 COPY . .
 
+# Set build environment variables
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GO111MODULE=on
 
-RUN go build -o agri-price-crawler cmd/craw-server/crawserver.go
+# Build the binary for Linux
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o agri-price-crawler cmd/craw-server/crawserver.go
 
+# Final stage
+FROM alpine:latest
 
-# 1.你需要在项目根目录创建craw.pem和craw-key.pem，craw.yaml文件
-# 2.在docker创建redis容器和mysql容器,并连接到craw-server网络
-# 3.运行 docker run -p 8080:8080 --network craw-server -v $(pwd)/craw.yaml:/app/craw.yaml --name craw-server agri-price-crawler
-#run stage
-FROM golang:1.25-alpine
-WORKDIR /app
+# Install ca-certificates for HTTPS connections
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+# Create non-root user for security
+RUN addgroup -g 65532 nonroot &&\
+    adduser -D -u 65532 -G nonroot nonroot
+
+# Copy the binary from builder stage
 COPY --from=builder /app/agri-price-crawler .
-COPY --from=builder /app/craw.pem .
-COPY --from=builder /app/craw-key.pem .
-RUN mkdir -p /app/var
+
+# Copy certificates if they exist (optional)
+COPY --from=builder /app/craw.pem . 2>/dev/null || true
+COPY --from=builder /app/craw-key.pem . 2>/dev/null || true
+
+# Create directory for logs
+RUN mkdir -p /app/var && chown -R nonroot:nonroot /app/var
+
+# Switch to non-root user
+USER nonroot
+
 EXPOSE 8080
-CMD ["/app/agri-price-crawler"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1
+
+CMD ["./agri-price-crawler"]
