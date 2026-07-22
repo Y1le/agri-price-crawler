@@ -1,0 +1,67 @@
+openapi: 3.1.0
+info:
+  title: Agri Price Crawler API
+  version: 0.1.0
+  description: |
+    Infrastructure probes are root routes so that deployment systems can reach
+    them independently of product routing. Future product APIs use `/api/v1`.
+paths:
+  /livez:
+    get:
+      summary: Liveness probe
+      description: Reports whether the gateway process is alive.
+      responses:
+        '200':
+          description: Gateway is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: Reports whether the gateway is ready to serve traffic.
+      responses:
+        '200':
+          description: Gateway is ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Gateway is not ready.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  schemas:
+    Health:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
+    Problem:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - code
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          example: about:blank
+        title:
+          type: string
+          example: Service Not Ready
+        status:
+          type: integer
+          example: 503
+        code:
+          type: string
+          example: service_not_ready
