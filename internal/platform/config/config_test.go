@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -19,8 +20,25 @@ func TestLoadDefaults(t *testing.T) {
 	if got.Redis.Addr != "localhost:6379" {
 		t.Fatalf("got %+v", got.Redis)
 	}
-	if got.Worker.PollInterval != time.Second || got.Worker.BatchSize != 4 {
+	if got.Worker.PollInterval != time.Second || got.Worker.BatchSize != 4 || got.Worker.LeaseDuration != 5*time.Minute {
 		t.Fatalf("got %+v", got.Worker)
+	}
+}
+
+func TestLoadRejectsNonPositiveWorkerJobLeaseDuration(t *testing.T) {
+	for _, value := range []string{"0s", "-1s"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv("WORKER_JOB_LEASE_DURATION", value)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatal("Load succeeded, want non-positive job lease duration error")
+			}
+			if !strings.Contains(err.Error(), "WORKER_JOB_LEASE_DURATION") {
+				t.Fatalf("error = %q, want it to name WORKER_JOB_LEASE_DURATION", err)
+			}
+		})
 	}
 }
 
@@ -41,5 +59,22 @@ func TestLoadRejectsInvalidWorkerValues(t *testing.T) {
 	t.Setenv("WORKER_BATCH_SIZE", "0")
 	if _, err := config.Load(); err == nil {
 		t.Fatal("want batch error")
+	}
+}
+
+func TestLoadRejectsNonPositiveWorkerPollInterval(t *testing.T) {
+	for _, value := range []string{"0s", "-1s"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv("WORKER_POLL_INTERVAL", value)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatal("Load succeeded, want non-positive poll interval error")
+			}
+			if !strings.Contains(err.Error(), "WORKER_POLL_INTERVAL") {
+				t.Fatalf("error = %q, want it to name WORKER_POLL_INTERVAL", err)
+			}
+		})
 	}
 }

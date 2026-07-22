@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const requiredSchemaVersion int64 = 1
+const requiredSchemaVersion int64 = 2
 
 // RunGateway assembles and runs the HTTP gateway until ctx is cancelled.
 func RunGateway(ctx context.Context, cfg config.Config, logger *slog.Logger) error {

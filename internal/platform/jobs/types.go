@@ -30,8 +30,8 @@ type NewJob struct {
 // Repository persists and advances background jobs through their lifecycle.
 type Repository interface {
 	Enqueue(context.Context, NewJob) (int64, bool, error)
-	Claim(context.Context, string, time.Time, int) ([]Job, error)
-	Complete(context.Context, int64) error
-	Retry(context.Context, int64, time.Time, string) error
-	Dead(context.Context, int64, string) error
+	Claim(context.Context, string, time.Time, time.Duration, int) ([]Job, error)
+	Complete(context.Context, int64, string) error
+	Retry(context.Context, int64, string, time.Time, string) error
+	Dead(context.Context, int64, string, string) error
 }

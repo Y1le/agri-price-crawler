@@ -40,6 +40,9 @@ func TestRunnerCompletesSuccessfulJob(t *testing.T) {
 	if len(calls) != 1 || calls[0].action != "complete" || calls[0].id != 1 {
 		t.Fatalf("lifecycle calls = %+v, want one complete for job 1", calls)
 	}
+	if calls[0].contextErr != nil || !calls[0].contextHasDeadline {
+		t.Fatalf("lifecycle context err=%v hasDeadline=%t, want fresh bounded context", calls[0].contextErr, calls[0].contextHasDeadline)
+	}
 }
 
 func TestRunnerRetriesFirstFailureAfterOneMinute(t *testing.T) {
@@ -92,6 +95,28 @@ func TestRunnerMarksFinalFailureDead(t *testing.T) {
 	calls := repository.lifecycleCalls()
 	if len(calls) != 1 || calls[0].action != "dead" || calls[0].id != 4 || calls[0].lastError != "permanent failure" {
 		t.Fatalf("lifecycle calls = %+v, want one dead for job 4", calls)
+	}
+}
+
+func TestRunnerMarksPermanentFirstFailureDead(t *testing.T) {
+	repository := &fakeRepository{claimed: []jobs.Job{{
+		ID: 10, Kind: "prices.fetch", Payload: json.RawMessage(`{}`), Attempts: 1, MaxAttempts: 3,
+	}}}
+	runner := newTestRunner(repository)
+	cause := errors.New("invalid market code")
+	if err := runner.Register("prices.fetch", func(context.Context, json.RawMessage) error {
+		return jobs.Permanent(cause)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runner.RunOnce(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := repository.lifecycleCalls()
+	if len(calls) != 1 || calls[0].action != "dead" || calls[0].id != 10 || calls[0].lastError != cause.Error() {
+		t.Fatalf("lifecycle calls = %+v, want first-attempt dead preserving %q", calls, cause)
 	}
 }
 
@@ -181,7 +206,7 @@ func TestRunnerCapsRetryDelayAtOneHour(t *testing.T) {
 func TestRunnerRunsImmediatelyAndStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var claimCalls atomic.Int64
-	repository := &fakeRepository{claimFunc: func(context.Context, string, time.Time, int) ([]jobs.Job, error) {
+	repository := &fakeRepository{claimFunc: func(context.Context, string, time.Time, time.Duration, int) ([]jobs.Job, error) {
 		claimCalls.Add(1)
 		cancel()
 		return nil, nil
@@ -195,6 +220,129 @@ func TestRunnerRunsImmediatelyAndStopsOnCancellation(t *testing.T) {
 	}
 }
 
+func TestRunnerDoesNotClaimWhenAlreadyCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var claimCalls atomic.Int64
+	repository := &fakeRepository{claimFunc: func(context.Context, string, time.Time, time.Duration, int) ([]jobs.Job, error) {
+		claimCalls.Add(1)
+		return nil, nil
+	}}
+
+	if err := newTestRunner(repository).Run(ctx, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if got := claimCalls.Load(); got != 0 {
+		t.Fatalf("Claim called %d times after shutdown began, want zero", got)
+	}
+}
+
+func TestRunnerBoundsHandlerDeadlineBelowLease(t *testing.T) {
+	leaseDuration := 5 * time.Minute
+	repository := &fakeRepository{claimed: []jobs.Job{{
+		ID: 11, Kind: "prices.fetch", Payload: json.RawMessage(`{}`), Attempts: 1, MaxAttempts: 3,
+	}}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	runner := jobs.NewRunner(repository, "worker-test", 10, leaseDuration, logger)
+	if err := runner.Register("prices.fetch", func(ctx context.Context, _ json.RawMessage) error {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return errors.New("handler context has no deadline")
+		}
+		if remaining := time.Until(deadline); remaining <= 0 || remaining >= leaseDuration {
+			return errors.New("handler deadline is not strictly below the lease")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runner.RunOnce(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	calls := repository.lifecycleCalls()
+	if len(calls) != 1 || calls[0].action != "complete" {
+		t.Fatalf("lifecycle calls = %+v, want complete", calls)
+	}
+}
+
+func TestRunnerCancellationRetriesWithFreshBoundedLifecycleContext(t *testing.T) {
+	leaseDuration := 200 * time.Millisecond
+	repository := &fakeRepository{claimed: []jobs.Job{{
+		ID: 12, Kind: "prices.fetch", Payload: json.RawMessage(`{}`), Attempts: 1, MaxAttempts: 3,
+	}}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	runner := jobs.NewRunner(repository, "worker-test", 10, leaseDuration, logger)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	if err := runner.Register("prices.fetch", func(ctx context.Context, _ json.RawMessage) error {
+		close(started)
+		<-release
+		return ctx.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.RunOnce(ctx, time.Now()) }()
+	<-started
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("RunOnce did not observe its bounded shutdown grace period")
+	}
+	close(release)
+
+	calls := repository.lifecycleCalls()
+	if len(calls) != 1 || calls[0].action != "retry" || calls[0].id != 12 {
+		t.Fatalf("lifecycle calls = %+v, want cancellation retry", calls)
+	}
+	if calls[0].contextErr != nil || !calls[0].contextHasDeadline {
+		t.Fatalf("lifecycle context err=%v hasDeadline=%t, want fresh bounded context", calls[0].contextErr, calls[0].contextHasDeadline)
+	}
+}
+
+func TestRunnerCancellationMarksExhaustedJobDead(t *testing.T) {
+	leaseDuration := 200 * time.Millisecond
+	repository := &fakeRepository{claimed: []jobs.Job{{
+		ID: 13, Kind: "prices.fetch", Payload: json.RawMessage(`{}`), Attempts: 3, MaxAttempts: 3,
+	}}}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	runner := jobs.NewRunner(repository, "worker-test", 10, leaseDuration, logger)
+	started := make(chan struct{})
+	if err := runner.Register("prices.fetch", func(ctx context.Context, _ json.RawMessage) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runner.RunOnce(ctx, time.Now()) }()
+	<-started
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	calls := repository.lifecycleCalls()
+	if len(calls) != 1 || calls[0].action != "dead" || calls[0].id != 13 {
+		t.Fatalf("lifecycle calls = %+v, want cancellation dead on exhausted attempt", calls)
+	}
+	if calls[0].contextErr != nil || !calls[0].contextHasDeadline {
+		t.Fatalf("lifecycle context err=%v hasDeadline=%t, want fresh bounded context", calls[0].contextErr, calls[0].contextHasDeadline)
+	}
+}
+
 func TestRunnerLogsLifecycleUpdateFailure(t *testing.T) {
 	repository := &fakeRepository{
 		claimed:     []jobs.Job{{ID: 9, Kind: "prices.fetch", Payload: json.RawMessage(`{}`), Attempts: 1, MaxAttempts: 3}},
@@ -202,7 +350,7 @@ func TestRunnerLogsLifecycleUpdateFailure(t *testing.T) {
 	}
 	var output bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&output, nil))
-	runner := jobs.NewRunner(repository, "worker-test", 10, logger)
+	runner := jobs.NewRunner(repository, "worker-test", 10, 5*time.Minute, logger)
 	if err := runner.Register("prices.fetch", func(context.Context, json.RawMessage) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +369,7 @@ func TestRunnerLogsLifecycleUpdateFailure(t *testing.T) {
 
 func newTestRunner(repository jobs.Repository) *jobs.Runner {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return jobs.NewRunner(repository, "worker-test", 10, logger)
+	return jobs.NewRunner(repository, "worker-test", 10, 5*time.Minute, logger)
 }
 
 func failingHandler(message string) jobs.Handler {
@@ -237,16 +385,18 @@ func assertSingleRetry(t *testing.T, calls []lifecycleCall, id int64, runAt time
 }
 
 type lifecycleCall struct {
-	action    string
-	id        int64
-	runAt     time.Time
-	lastError string
+	action             string
+	id                 int64
+	runAt              time.Time
+	lastError          string
+	contextErr         error
+	contextHasDeadline bool
 }
 
 type fakeRepository struct {
 	mu          sync.Mutex
 	claimed     []jobs.Job
-	claimFunc   func(context.Context, string, time.Time, int) ([]jobs.Job, error)
+	claimFunc   func(context.Context, string, time.Time, time.Duration, int) ([]jobs.Job, error)
 	completeErr error
 	calls       []lifecycleCall
 }
@@ -255,32 +405,38 @@ func (r *fakeRepository) Enqueue(context.Context, jobs.NewJob) (int64, bool, err
 	return 0, false, errors.New("unexpected Enqueue call")
 }
 
-func (r *fakeRepository) Claim(ctx context.Context, workerID string, now time.Time, limit int) ([]jobs.Job, error) {
+func (r *fakeRepository) Claim(ctx context.Context, workerID string, now time.Time, leaseDuration time.Duration, limit int) ([]jobs.Job, error) {
 	r.mu.Lock()
 	claimFunc := r.claimFunc
 	claimed := append([]jobs.Job(nil), r.claimed...)
 	r.mu.Unlock()
 	if claimFunc != nil {
-		return claimFunc(ctx, workerID, now, limit)
+		return claimFunc(ctx, workerID, now, leaseDuration, limit)
 	}
 	return claimed, nil
 }
 
-func (r *fakeRepository) Complete(_ context.Context, id int64) error {
-	r.record(lifecycleCall{action: "complete", id: id})
+func (r *fakeRepository) Complete(ctx context.Context, id int64, _ string) error {
+	r.recordLifecycleContext(ctx, lifecycleCall{action: "complete", id: id})
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.completeErr
 }
 
-func (r *fakeRepository) Retry(_ context.Context, id int64, runAt time.Time, lastError string) error {
-	r.record(lifecycleCall{action: "retry", id: id, runAt: runAt, lastError: lastError})
+func (r *fakeRepository) Retry(ctx context.Context, id int64, _ string, runAt time.Time, lastError string) error {
+	r.recordLifecycleContext(ctx, lifecycleCall{action: "retry", id: id, runAt: runAt, lastError: lastError})
 	return nil
 }
 
-func (r *fakeRepository) Dead(_ context.Context, id int64, lastError string) error {
-	r.record(lifecycleCall{action: "dead", id: id, lastError: lastError})
+func (r *fakeRepository) Dead(ctx context.Context, id int64, _ string, lastError string) error {
+	r.recordLifecycleContext(ctx, lifecycleCall{action: "dead", id: id, lastError: lastError})
 	return nil
+}
+
+func (r *fakeRepository) recordLifecycleContext(ctx context.Context, call lifecycleCall) {
+	call.contextErr = ctx.Err()
+	_, call.contextHasDeadline = ctx.Deadline()
+	r.record(call)
 }
 
 func (r *fakeRepository) record(call lifecycleCall) {

@@ -32,8 +32,9 @@ type Redis struct {
 }
 
 type Worker struct {
-	PollInterval time.Duration
-	BatchSize    int
+	PollInterval  time.Duration
+	BatchSize     int
+	LeaseDuration time.Duration
 }
 
 // Load reads configuration from environment variables and validates its values.
@@ -55,6 +56,16 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if pollInterval <= 0 {
+		return Config{}, fmt.Errorf("WORKER_POLL_INTERVAL must be positive")
+	}
+	leaseDuration, err := durationEnv("WORKER_JOB_LEASE_DURATION", 5*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	if leaseDuration <= 0 {
+		return Config{}, fmt.Errorf("WORKER_JOB_LEASE_DURATION must be positive")
+	}
 
 	batchSize, err := intEnv("WORKER_BATCH_SIZE", 4)
 	if err != nil {
@@ -74,7 +85,7 @@ func Load() (Config, error) {
 			Password: os.Getenv("REDIS_PASSWORD"),
 			DB:       redisDB,
 		},
-		Worker: Worker{PollInterval: pollInterval, BatchSize: batchSize},
+		Worker: Worker{PollInterval: pollInterval, BatchSize: batchSize, LeaseDuration: leaseDuration},
 	}, nil
 }
 

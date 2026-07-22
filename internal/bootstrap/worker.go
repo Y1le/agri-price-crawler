@@ -28,7 +28,7 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) erro
 	}
 	workerID := fmt.Sprintf("%s-%d", hostname, os.Getpid())
 	repository := jobs.NewPostgresRepository(pool)
-	runner := jobs.NewRunner(repository, workerID, cfg.Worker.BatchSize, logger)
+	runner := jobs.NewRunner(repository, workerID, cfg.Worker.BatchSize, cfg.Worker.LeaseDuration, logger)
 	if err := runner.Run(ctx, cfg.Worker.PollInterval); err != nil {
 		return fmt.Errorf("run Worker: %w", err)
 	}

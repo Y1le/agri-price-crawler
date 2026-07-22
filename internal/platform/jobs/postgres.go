@@ -61,10 +61,16 @@ func (r *PostgresRepository) Enqueue(ctx context.Context, job NewJob) (int64, bo
 	return id, false, nil
 }
 
-// Claim atomically claims up to limit pending jobs that are ready to run.
-func (r *PostgresRepository) Claim(ctx context.Context, workerID string, now time.Time, limit int) ([]Job, error) {
+// Claim atomically recovers expired jobs and claims up to limit ready jobs.
+func (r *PostgresRepository) Claim(ctx context.Context, workerID string, now time.Time, leaseDuration time.Duration, limit int) ([]Job, error) {
 	if limit < minClaimLimit || limit > maxClaimLimit {
 		return nil, fmt.Errorf("claim limit must be between %d and %d", minClaimLimit, maxClaimLimit)
+	}
+	if strings.TrimSpace(workerID) == "" {
+		return nil, errors.New("claim worker ID is required")
+	}
+	if leaseDuration <= 0 {
+		return nil, errors.New("claim lease duration must be positive")
 	}
 
 	tx, err := r.pool.Begin(ctx)
@@ -72,6 +78,29 @@ func (r *PostgresRepository) Claim(ctx context.Context, workerID string, now tim
 		return nil, fmt.Errorf("begin claim transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // A committed transaction cannot be rolled back.
+
+	const recoverExpired = `
+		WITH expired AS (
+			SELECT id
+			FROM platform_jobs
+			WHERE state = 'running' AND locked_at <= $1
+			ORDER BY locked_at, id
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE platform_jobs AS jobs
+		SET state = CASE WHEN jobs.attempts < jobs.max_attempts THEN 'pending' ELSE 'dead' END,
+			last_error = CASE
+				WHEN jobs.attempts < jobs.max_attempts THEN 'job lease expired'
+				ELSE 'job lease expired after final attempt'
+			END,
+			lock_owner = NULL,
+			locked_at = NULL,
+			updated_at = $2
+		FROM expired
+		WHERE jobs.id = expired.id`
+	if _, err := tx.Exec(ctx, recoverExpired, now.Add(-leaseDuration), now); err != nil {
+		return nil, fmt.Errorf("recover expired jobs: %w", err)
+	}
 
 	const claim = `
 		WITH picked AS (
@@ -88,8 +117,8 @@ func (r *PostgresRepository) Claim(ctx context.Context, workerID string, now tim
 			SET state = 'running',
 				attempts = jobs.attempts + 1,
 				lock_owner = $1,
-				locked_at = now(),
-				updated_at = now()
+				locked_at = $2,
+				updated_at = $2
 			FROM picked
 			WHERE jobs.id = picked.id
 			RETURNING jobs.id, jobs.kind, jobs.business_key, jobs.payload,
@@ -123,33 +152,34 @@ func (r *PostgresRepository) Claim(ctx context.Context, workerID string, now tim
 	return jobs, nil
 }
 
-// Complete marks a running job as successfully completed.
-func (r *PostgresRepository) Complete(ctx context.Context, id int64) error {
+// Complete marks a running job owned by workerID as successfully completed.
+func (r *PostgresRepository) Complete(ctx context.Context, id int64, workerID string) error {
 	const complete = `
 		UPDATE platform_jobs
-		SET state = 'succeeded', lock_owner = NULL, locked_at = NULL, updated_at = now()
-		WHERE id = $1 AND state = 'running'`
-	return r.requireOneUpdate(ctx, complete, id)
+		SET state = 'succeeded', last_error = NULL,
+			lock_owner = NULL, locked_at = NULL, updated_at = now()
+		WHERE id = $1 AND state = 'running' AND lock_owner = $2`
+	return r.requireOneUpdate(ctx, complete, id, workerID)
 }
 
-// Retry returns a running job to pending with its next execution time and error.
-func (r *PostgresRepository) Retry(ctx context.Context, id int64, runAt time.Time, lastError string) error {
+// Retry returns a running job owned by workerID to pending.
+func (r *PostgresRepository) Retry(ctx context.Context, id int64, workerID string, runAt time.Time, lastError string) error {
 	const retry = `
 		UPDATE platform_jobs
-		SET state = 'pending', run_at = $2, last_error = $3,
+		SET state = 'pending', run_at = $3, last_error = $4,
 			lock_owner = NULL, locked_at = NULL, updated_at = now()
-		WHERE id = $1 AND state = 'running'`
-	return r.requireOneUpdate(ctx, retry, id, runAt, lastError)
+		WHERE id = $1 AND state = 'running' AND lock_owner = $2`
+	return r.requireOneUpdate(ctx, retry, id, workerID, runAt, lastError)
 }
 
-// Dead marks a running job as permanently failed with its final error.
-func (r *PostgresRepository) Dead(ctx context.Context, id int64, lastError string) error {
+// Dead marks a running job owned by workerID as permanently failed.
+func (r *PostgresRepository) Dead(ctx context.Context, id int64, workerID string, lastError string) error {
 	const dead = `
 		UPDATE platform_jobs
-		SET state = 'dead', last_error = $2,
+		SET state = 'dead', last_error = $3,
 			lock_owner = NULL, locked_at = NULL, updated_at = now()
-		WHERE id = $1 AND state = 'running'`
-	return r.requireOneUpdate(ctx, dead, id, lastError)
+		WHERE id = $1 AND state = 'running' AND lock_owner = $2`
+	return r.requireOneUpdate(ctx, dead, id, workerID, lastError)
 }
 
 func (r *PostgresRepository) requireOneUpdate(ctx context.Context, query string, args ...any) error {
