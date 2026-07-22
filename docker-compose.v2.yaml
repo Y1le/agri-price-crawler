@@ -1,5 +1,11 @@
 name: agri-price-crawler-v2
 
+x-backend-v2: &backend-v2
+  image: agri-price-crawler-v2:local
+  build:
+    context: .
+    dockerfile: Dockerfile.v2
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -26,6 +32,46 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  migrate:
+    <<: *backend-v2
+    entrypoint: ["/app/migrate"]
+    environment:
+      DATABASE_URL: postgres://agri:agri_dev@postgres:5432/agri?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  gateway:
+    <<: *backend-v2
+    environment:
+      DATABASE_URL: postgres://agri:agri_dev@postgres:5432/agri?sslmode=disable
+      REDIS_ADDR: redis:6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://localhost:8080/livez && wget -q -O /dev/null http://localhost:8080/readyz",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    <<: *backend-v2
+    entrypoint: ["/app/worker"]
+    environment:
+      DATABASE_URL: postgres://agri:agri_dev@postgres:5432/agri?sslmode=disable
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   postgres_v2_data:

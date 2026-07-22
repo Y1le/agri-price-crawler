@@ -91,3 +91,36 @@ jobs:
           name: binaries-${{ matrix.os }}-go${{ matrix.go_version }}
           path: _output/
           retention-days: 7
+
+  backend_v2:
+    name: Backend v2
+    runs-on: ubuntu-latest
+    env:
+      TEST_DATABASE_URL: postgres://agri:agri_dev@localhost:5432/agri?sslmode=disable
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.24.3
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.3
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Start PostgreSQL and Redis
+        run: docker compose -f docker-compose.v2.yaml up -d --wait postgres redis
+
+      - name: Test backend v2
+        run: make v2-test
+
+      - name: Build backend v2 binaries
+        run: make v2-build
+
+      - name: Build backend v2 image
+        run: docker build -f Dockerfile.v2 -t agri-price-crawler-v2:ci .
+
+      - name: Stop backend v2 services
+        if: always()
+        run: docker compose -f docker-compose.v2.yaml down -v

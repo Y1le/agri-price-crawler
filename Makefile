@@ -51,6 +51,30 @@ docker-build: tidy gen
 	@mkdir -p $(OUTPUT_DIR)/platforms
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -ldflags="-s -w" -o $(OUTPUT_DIR)/platforms/craw-server $(ROOT_PACKAGE)/cmd/craw-server
 
+# Backend v2 tests
+.PHONY: v2-test
+v2-test:
+	@echo "===========> Running backend v2 tests <==========="
+	$(GO) test -p 1 -race ./internal/platform/... ./internal/gateway/... ./internal/bootstrap/...
+
+# Backend v2 binaries
+.PHONY: v2-build
+v2-build:
+	@echo "===========> Building backend v2 binaries <==========="
+	@mkdir -p $(OUTPUT_DIR)/platforms
+	$(GO) build -o $(OUTPUT_DIR)/platforms/gateway $(ROOT_PACKAGE)/cmd/gateway
+	$(GO) build -o $(OUTPUT_DIR)/platforms/worker $(ROOT_PACKAGE)/cmd/worker
+	$(GO) build -o $(OUTPUT_DIR)/platforms/migrate $(ROOT_PACKAGE)/cmd/migrate
+
+# Backend v2 live smoke test
+.PHONY: v2-smoke
+v2-smoke:
+	docker compose -f docker-compose.v2.yaml up --build --wait
+	curl --fail --silent --show-error http://localhost:8080/livez
+	@echo
+	curl --fail --silent --show-error http://localhost:8080/readyz
+	@echo
+
 # 帮助信息
 .PHONY: help
 help:
