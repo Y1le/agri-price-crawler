@@ -1,6 +1,6 @@
 module github.com/Y1le/agri-price-crawler
 
-go 1.25.0
+go 1.24.3
 
 require (
 	github.com/AlekSi/pointer v1.2.0
@@ -18,15 +18,15 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gosuri/uitable v0.0.4
 	github.com/influxdata/influxdb v1.12.2
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.8.0
 	github.com/marmotedu/component-base v1.6.2
 	github.com/marmotedu/errors v1.0.2
 	github.com/marmotedu/iam v1.7.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/novalagung/gubrak v1.0.0
 	github.com/prometheus/client_golang v1.22.0
-	github.com/robfig/cron/v3 v3.0.1
 	github.com/redis/go-redis/v9 v9.21.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/sashabaranov/go-openai v1.41.2
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b
 	github.com/sirupsen/logrus v1.9.3
