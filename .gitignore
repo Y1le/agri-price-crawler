@@ -21,5 +21,6 @@
 /Godeps/
 /pb/*.pb.go
 /_output/
+.worktrees/
 .vscode/
 var/*
