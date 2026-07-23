@@ -22,6 +22,8 @@ const (
 	otpCodeRange          = uint64(1_000_000)
 	otpRandomRange        = uint64(1) << 32
 	otpRandomLimit        = otpRandomRange / otpCodeRange * otpCodeRange
+	smtpCleanupTimeout    = 2 * time.Second
+	providerTokenMaxBytes = 256
 )
 
 // RequestEmailLoginCode creates the short-lived Redis proof before asking the
@@ -63,8 +65,19 @@ func (s *Service) RequestEmailLoginCode(
 	}
 	if err := s.emailSender.SendCode(ctx, email, code, s.policy.OTPTTL); err != nil {
 		// DeleteIfMatch protects a newer concurrently issued challenge. Cleanup
-		// failure must not expose adapter details or change the delivery error.
-		_ = s.otpStore.DeleteIfMatch(ctx, challenge)
+		// uses a short context detached from request cancellation so a timed-out
+		// SMTP request cannot leave a valid but undelivered proof behind.
+		cleanupCtx, cancelCleanup := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			smtpCleanupTimeout,
+		)
+		_ = s.otpStore.DeleteIfMatch(cleanupCtx, challenge)
+		cancelCleanup()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("identity: deliver login code interrupted: %w", ctxErr)
+		}
+		// Cleanup failure must not expose adapter details or change the
+		// externally observable delivery classification.
 		return fmt.Errorf("identity: deliver login code: %w", ErrUpstreamUnavailable)
 	}
 	return nil
@@ -131,10 +144,11 @@ func (s *Service) LoginWeChat(
 	if err != nil {
 		return LoginResult{}, classifyWeChatLoginError(err)
 	}
-	if strings.TrimSpace(provider.AppID) == "" ||
-		strings.TrimSpace(provider.OpenID) == "" {
+	if !validProviderToken(provider.AppID, false) ||
+		!validProviderToken(provider.OpenID, false) ||
+		!validProviderToken(provider.UnionID, true) {
 		return LoginResult{}, fmt.Errorf(
-			"identity: WeChat exchange returned no identity: %w",
+			"identity: WeChat exchange returned invalid identity data: %w",
 			ErrUpstreamUnavailable,
 		)
 	}
@@ -301,7 +315,25 @@ func sourceIPDigest(raw string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: invalid source IP", ErrInvalidRequest)
 	}
+	if address.Zone() != "" {
+		return "", fmt.Errorf("%w: source IP zone is not allowed", ErrInvalidRequest)
+	}
 	return sha256Hex(address.Unmap().String()), nil
+}
+
+func validProviderToken(value string, optional bool) bool {
+	if value == "" {
+		return optional
+	}
+	if len(value) > providerTokenMaxBytes {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		if value[index] < 0x21 || value[index] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func emailDigest(normalized string) string {

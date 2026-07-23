@@ -78,6 +78,7 @@ func TestRequestEmailLoginCodeNormalizesHashesAndCleansUpSMTPFailure(t *testing.
 
 	calls = calls[:0]
 	email.err = errors.New("smtp secret password and code 000042")
+	otp.deleteErr = errors.New("redis cleanup secret")
 	err := service.RequestEmailLoginCode(
 		context.Background(),
 		"Farmer@Example.COM",
@@ -88,7 +89,8 @@ func TestRequestEmailLoginCodeNormalizesHashesAndCleansUpSMTPFailure(t *testing.
 	}
 	if strings.Contains(err.Error(), "Farmer") ||
 		strings.Contains(err.Error(), "000042") ||
-		strings.Contains(err.Error(), "password") {
+		strings.Contains(err.Error(), "password") ||
+		strings.Contains(err.Error(), "redis cleanup") {
 		t.Fatalf("error leaks sensitive material: %v", err)
 	}
 	if got, want := calls, []string{"otp-issue", "email-send", "otp-delete"}; !loginStringsEqual(got, want) {
@@ -165,6 +167,129 @@ func TestRequestEmailLoginCodeStopsBeforeSMTPWhenIssueFails(t *testing.T) {
 	}
 	if repository.transactions != 0 {
 		t.Fatalf("database transactions = %d", repository.transactions)
+	}
+}
+
+func TestRequestEmailLoginCodeCleansUpWithBoundedLiveContextAndPreservesCancellation(t *testing.T) {
+	tests := []struct {
+		name       string
+		newContext func() (context.Context, func())
+		want       error
+	}{
+		{
+			name: "canceled",
+			newContext: func() (context.Context, func()) {
+				ctx, cancel := context.WithCancel(context.Background())
+				return ctx, cancel
+			},
+			want: context.Canceled,
+		},
+		{
+			name: "deadline exceeded",
+			newContext: func() (context.Context, func()) {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+				return ctx, func() {
+					time.Sleep(5 * time.Millisecond)
+					cancel()
+				}
+			},
+			want: context.DeadlineExceeded,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, failRequest := test.newContext()
+			calls := make([]string, 0)
+			otp := &loginOTPStore{calls: &calls}
+			email := &loginEmailSender{
+				calls: &calls,
+				err:   errors.New("delivery failed"),
+				hook:  failRequest,
+			}
+			service := newLoginService(
+				t,
+				newLoginRepository(&calls),
+				otp,
+				email,
+				&loginWeChatExchanger{},
+				&loginRandom{bytes: uint32Bytes(1)},
+				loginTestNow(),
+			)
+
+			err := service.RequestEmailLoginCode(
+				ctx,
+				"farmer@example.com",
+				"192.0.2.1",
+			)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("error = %v, want %v", err, test.want)
+			}
+			if otp.deleteContextErr != nil {
+				t.Fatalf("cleanup context was already done: %v", otp.deleteContextErr)
+			}
+			if !otp.deleteHasDeadline {
+				t.Fatal("cleanup context has no deadline")
+			}
+			if remaining := time.Until(otp.deleteDeadline); remaining <= 0 ||
+				remaining > 3*time.Second {
+				t.Fatalf("cleanup deadline remaining = %v", remaining)
+			}
+			if got, want := calls, []string{
+				"otp-issue", "email-send", "otp-delete",
+			}; !loginStringsEqual(got, want) {
+				t.Fatalf("calls = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestRequestEmailLoginCodePreservesDeadlineExceededAfterCleanup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	time.Sleep(5 * time.Millisecond)
+
+	calls := make([]string, 0)
+	otp := &loginOTPStore{calls: &calls}
+	service := newLoginService(
+		t,
+		newLoginRepository(&calls),
+		otp,
+		&loginEmailSender{calls: &calls, err: errors.New("delivery failed")},
+		&loginWeChatExchanger{},
+		&loginRandom{bytes: uint32Bytes(1)},
+		loginTestNow(),
+	)
+	err := service.RequestEmailLoginCode(
+		ctx,
+		"farmer@example.com",
+		"192.0.2.1",
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v", err)
+	}
+	if otp.deleteContextErr != nil || !otp.deleteHasDeadline {
+		t.Fatalf(
+			"cleanup context err=%v hasDeadline=%v",
+			otp.deleteContextErr,
+			otp.deleteHasDeadline,
+		)
+	}
+}
+
+func TestSourceIPDigestRejectsZonesAndCanonicalizesMappedIPv4(t *testing.T) {
+	if _, err := sourceIPDigest("fe80::1%en0"); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("zoned IPv6 error = %v", err)
+	}
+	ipv4, err := sourceIPDigest("192.0.2.17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapped, err := sourceIPDigest("::ffff:192.0.2.17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ipv4 != mapped {
+		t.Fatalf("IPv4 digest %q != mapped digest %q", ipv4, mapped)
 	}
 }
 
@@ -599,6 +724,86 @@ func TestWeChatLoginRejectsInvalidIPAndIncompleteProviderIdentityBeforeDatabase(
 	}
 }
 
+func TestWeChatLoginRejectsMalformedProviderTokensBeforeDatabase(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider WeChatIdentity
+	}{
+		{
+			name:     "AppID whitespace",
+			provider: WeChatIdentity{AppID: "wx app", OpenID: "openid"},
+		},
+		{
+			name:     "OpenID control",
+			provider: WeChatIdentity{AppID: "wx-app", OpenID: "open\nid"},
+		},
+		{
+			name:     "UnionID whitespace only",
+			provider: WeChatIdentity{AppID: "wx-app", OpenID: "openid", UnionID: " "},
+		},
+		{
+			name:     "UnionID non-ASCII",
+			provider: WeChatIdentity{AppID: "wx-app", OpenID: "openid", UnionID: "联合"},
+		},
+		{
+			name: "AppID too long",
+			provider: WeChatIdentity{
+				AppID:  strings.Repeat("a", 257),
+				OpenID: "openid",
+			},
+		},
+		{
+			name: "OpenID too long",
+			provider: WeChatIdentity{
+				AppID:  "wx-app",
+				OpenID: strings.Repeat("o", 257),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			calls := make([]string, 0)
+			repository := newLoginRepository(&calls)
+			service := newLoginService(
+				t,
+				repository,
+				&loginOTPStore{calls: &calls},
+				&loginEmailSender{},
+				&loginWeChatExchanger{calls: &calls, result: test.provider},
+				&incrementingReader{next: 1},
+				loginTestNow(),
+			)
+			result, err := service.LoginWeChat(
+				context.Background(),
+				"provider-code-must-stay-secret",
+				"203.0.113.1",
+				ClientWeChatMini,
+			)
+			if !errors.Is(err, ErrUpstreamUnavailable) ||
+				result != (LoginResult{}) {
+				t.Fatalf("result=%+v error=%v", result, err)
+			}
+			if strings.Contains(err.Error(), "provider-code") ||
+				(test.provider.AppID != "" &&
+					strings.Contains(err.Error(), test.provider.AppID)) ||
+				(test.provider.OpenID != "" &&
+					strings.Contains(err.Error(), test.provider.OpenID)) ||
+				(strings.TrimSpace(test.provider.UnionID) != "" &&
+					strings.Contains(err.Error(), test.provider.UnionID)) {
+				t.Fatalf("error leaks provider material: %v", err)
+			}
+			if got, want := calls, []string{
+				"otp-allow", "wechat-exchange",
+			}; !loginStringsEqual(got, want) {
+				t.Fatalf("calls=%v want=%v", got, want)
+			}
+			if repository.transactions != 0 {
+				t.Fatalf("database transactions = %d", repository.transactions)
+			}
+		})
+	}
+}
+
 func TestEmailLoginDoesNotRetryNonIdentityConflict(t *testing.T) {
 	calls := make([]string, 0)
 	repository := newLoginRepository(&calls)
@@ -861,6 +1066,10 @@ type loginOTPStore struct {
 	verifyErr error
 	deleteErr error
 	allowErr  error
+
+	deleteContextErr  error
+	deleteDeadline    time.Time
+	deleteHasDeadline bool
 }
 
 func (s *loginOTPStore) Issue(_ context.Context, challenge OTPChallenge) error {
@@ -875,9 +1084,11 @@ func (s *loginOTPStore) Verify(_ context.Context, attempt OTPAttempt) error {
 	return s.verifyErr
 }
 
-func (s *loginOTPStore) DeleteIfMatch(_ context.Context, challenge OTPChallenge) error {
+func (s *loginOTPStore) DeleteIfMatch(ctx context.Context, challenge OTPChallenge) error {
 	loginAppendCall(s.calls, "otp-delete")
 	s.deleted = challenge
+	s.deleteContextErr = ctx.Err()
+	s.deleteDeadline, s.deleteHasDeadline = ctx.Deadline()
 	return s.deleteErr
 }
 
@@ -893,6 +1104,7 @@ type loginEmailSender struct {
 	code      string
 	ttl       time.Duration
 	err       error
+	hook      func()
 }
 
 func (s *loginEmailSender) SendCode(
@@ -905,6 +1117,9 @@ func (s *loginEmailSender) SendCode(
 	s.recipient = recipient
 	s.code = code
 	s.ttl = ttl
+	if s.hook != nil {
+		s.hook()
+	}
 	return s.err
 }
 
