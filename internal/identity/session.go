@@ -31,7 +31,7 @@ func (s *Service) createSession(
 	if tx == nil || user.ID == uuid.Nil {
 		return LoginResult{}, ErrTokenInvalid
 	}
-	if err := client.Validate(); err != nil {
+	if err := s.validateClient(client); err != nil {
 		return LoginResult{}, err
 	}
 	switch user.Status {
@@ -103,7 +103,7 @@ func (s *Service) Refresh(
 	rawRefresh string,
 	client ClientKind,
 ) (LoginResult, error) {
-	if err := client.Validate(); err != nil {
+	if err := s.validateClient(client); err != nil {
 		return LoginResult{}, err
 	}
 	if rawRefresh == "" {

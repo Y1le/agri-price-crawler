@@ -938,6 +938,40 @@ func TestLoginReturnsNoCredentialsWhenTransactionCommitFails(t *testing.T) {
 	}
 }
 
+func TestLoginRejectsDisabledClientBeforeProofSideEffects(t *testing.T) {
+	calls := make([]string, 0)
+	service := newLoginService(
+		t,
+		newLoginRepository(&calls),
+		&loginOTPStore{calls: &calls},
+		&loginEmailSender{},
+		&loginWeChatExchanger{calls: &calls},
+		&incrementingReader{next: 1},
+		loginTestNow(),
+	)
+	service.policy.EnabledClients = []ClientKind{ClientWeb}
+
+	if result, err := service.LoginEmail(
+		context.Background(),
+		"farmer@example.com",
+		"123456",
+		ClientWeChatMini,
+	); !errors.Is(err, ErrInvalidRequest) || result != (LoginResult{}) {
+		t.Fatalf("email result=%+v error=%v", result, err)
+	}
+	if result, err := service.LoginWeChat(
+		context.Background(),
+		"code",
+		"203.0.113.1",
+		ClientWeChatMini,
+	); !errors.Is(err, ErrInvalidRequest) || result != (LoginResult{}) {
+		t.Fatalf("wechat result=%+v error=%v", result, err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("disabled client side effects = %v", calls)
+	}
+}
+
 func newLoginService(
 	t *testing.T,
 	repository Repository,

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/Y1le/agri-price-crawler/internal/gateway"
@@ -32,6 +33,9 @@ type gatewayOverrides struct {
 	WeChat identity.WeChatExchanger
 	Clock  identity.Clock
 	Random io.Reader
+	// OTPPrefix is test-only dependency isolation. Production assembly leaves
+	// it empty and uses the stable agri:v2:identity namespace.
+	OTPPrefix string
 }
 
 // RunGateway assembles and runs the HTTP gateway until ctx is cancelled.
@@ -73,8 +77,17 @@ func buildGatewayHandler(
 	logger *slog.Logger,
 	overrides gatewayOverrides,
 ) (http.Handler, error) {
-	repository := identitypostgres.NewRepository(pool)
-	otpStore := redisotp.New(redisClient, "agri:v2:identity")
+	if (&http.Cookie{Name: cfg.Identity.Web.CookieName, Value: "token"}).String() == "" {
+		return nil, fmt.Errorf("construct Identity cookie policy: cookie name is invalid")
+	}
+	trustedProxies, err := httpx.ParseTrustedProxies(cfg.Identity.Web.TrustedProxies)
+	if err != nil {
+		return nil, fmt.Errorf("construct Identity trusted-proxy policy: %w", err)
+	}
+	corsMiddleware, err := exactOriginMiddleware(cfg.Identity.Web.AllowedOrigins)
+	if err != nil {
+		return nil, fmt.Errorf("construct Gateway CORS policy: %w", err)
+	}
 
 	emailSender := overrides.Email
 	if emailSender == nil {
@@ -112,6 +125,22 @@ func buildGatewayHandler(
 		return nil, fmt.Errorf("construct Identity token manager: %w", err)
 	}
 
+	if pool == nil {
+		return nil, fmt.Errorf("construct Identity PostgreSQL repository: pool is required")
+	}
+	if nilRedisClient(redisClient) {
+		return nil, fmt.Errorf("construct Identity Redis OTP store: client is required")
+	}
+	repository := identitypostgres.NewRepository(pool)
+	otpPrefix := overrides.OTPPrefix
+	if otpPrefix == "" {
+		otpPrefix = "agri:v2:identity"
+	}
+	otpStore := redisotp.New(redisClient, otpPrefix)
+	enabledClients := make([]identity.ClientKind, len(cfg.Identity.EnabledClients))
+	for index, client := range cfg.Identity.EnabledClients {
+		enabledClients[index] = identity.ClientKind(client)
+	}
 	service, err := identity.NewService(identity.Dependencies{
 		Repository:      repository,
 		OTPStore:        otpStore,
@@ -130,15 +159,12 @@ func buildGatewayHandler(
 		WeChatIPPerHour: cfg.Identity.WeChat.IPPerHour,
 		RefreshTTL:      cfg.Identity.RefreshTTL,
 		ReuseGrace:      cfg.Identity.ReuseGrace,
+		EnabledClients:  enabledClients,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("construct Identity service: %w", err)
 	}
 
-	trustedProxies, err := httpx.ParseTrustedProxies(cfg.Identity.Web.TrustedProxies)
-	if err != nil {
-		return nil, fmt.Errorf("construct Identity trusted-proxy policy: %w", err)
-	}
 	api := httpapi.New(httpapi.Config{
 		Service:     service,
 		TokenParser: tokenManager,
@@ -152,10 +178,6 @@ func buildGatewayHandler(
 		Logger:         logger,
 	})
 
-	corsMiddleware, err := exactOriginMiddleware(cfg.Identity.Web.AllowedOrigins)
-	if err != nil {
-		return nil, fmt.Errorf("construct Gateway CORS policy: %w", err)
-	}
 	return gateway.New(gateway.Config{
 		Ready:  pool.Ping,
 		Logger: logger,
@@ -164,6 +186,19 @@ func buildGatewayHandler(
 			return httpx.WithRequestID(corsMiddleware(next))
 		},
 	}).Handler(), nil
+}
+
+func nilRedisClient(client redis.UniversalClient) bool {
+	if client == nil {
+		return true
+	}
+	value := reflect.ValueOf(client)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 func exactOriginMiddleware(allowedOrigins []string) (func(http.Handler) http.Handler, error) {

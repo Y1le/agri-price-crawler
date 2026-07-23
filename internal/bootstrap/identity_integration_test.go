@@ -22,6 +22,8 @@ import (
 	platformpg "github.com/Y1le/agri-price-crawler/internal/platform/postgres"
 	"github.com/Y1le/agri-price-crawler/internal/platform/rediscache"
 	"github.com/Y1le/agri-price-crawler/internal/platform/testdb"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestIdentityIntegration(t *testing.T) {
@@ -33,23 +35,38 @@ func TestIdentityIntegration(t *testing.T) {
 
 	ctx := context.Background()
 	testdb.LockSchema(t, ctx, databaseURL)
-	pool, err := platformpg.Open(ctx, databaseURL)
+	adminPool, err := platformpg.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminPool.Close()
+	schemaName := fmt.Sprintf("identity_test_%d", time.Now().UnixNano())
+	quotedSchema := pgx.Identifier{schemaName}.Sanitize()
+	if _, err := adminPool.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := adminPool.Exec(cleanupCtx, "DROP SCHEMA "+quotedSchema+" CASCADE"); err != nil {
+			t.Errorf("drop isolated Identity test schema: %v", err)
+		}
+	}()
+
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolConfig.ConnConfig.RuntimeParams["search_path"] = schemaName
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	if err := migrate.Up(ctx, pool, migrationSources()...); err != nil {
+	if err := pool.Ping(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `
-		TRUNCATE
-			identity_account_merges,
-			identity_refresh_tokens,
-			identity_sessions,
-			identity_identities,
-			identity_users
-		CASCADE
-	`); err != nil {
+	if err := migrate.Up(ctx, pool, migrationSources()...); err != nil {
 		t.Fatal(err)
 	}
 
@@ -59,6 +76,9 @@ func TestIdentityIntegration(t *testing.T) {
 	defer weChatServer.Close()
 
 	cfg := identityIntegrationConfig(databaseURL, redisAddress, weChatServer.URL)
+	if err := cfg.ValidateGateway(); err != nil {
+		t.Fatalf("validate single-client Gateway config: %v", err)
+	}
 	redisClient := rediscache.Open(cfg.Redis)
 	defer redisClient.Close()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
@@ -72,9 +92,10 @@ func TestIdentityIntegration(t *testing.T) {
 		cfg,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		gatewayOverrides{
-			Email:  email,
-			Clock:  fixedBootstrapClock{now: time.Date(2026, 7, 23, 8, 0, 0, 0, time.UTC)},
-			Random: &deterministicBootstrapReader{},
+			Email:     email,
+			Clock:     fixedBootstrapClock{now: time.Date(2026, 7, 23, 8, 0, 0, 0, time.UTC)},
+			Random:    &deterministicBootstrapReader{},
+			OTPPrefix: "agri:test:identity:" + schemaName,
 		},
 	)
 	if err != nil {
@@ -111,6 +132,10 @@ func TestIdentityIntegration(t *testing.T) {
 	if len(codes) != 1 {
 		t.Fatalf("recorded email codes = %v, want exactly one", codes)
 	}
+
+	response = identityRequest(t, server.Client(), http.MethodPost, server.URL+"/api/v1/auth/email/login",
+		`{"email":`+jsonString(address)+`,"code":`+jsonString(codes[0])+`,"client_kind":"web"}`, "")
+	requireStatus(t, response, http.StatusBadRequest)
 
 	response = identityRequest(t, server.Client(), http.MethodPost, server.URL+"/api/v1/auth/email/login",
 		`{"email":`+jsonString(address)+`,"code":`+jsonString(codes[0])+`,"client_kind":"wechat_mini"}`, "")
@@ -175,6 +200,49 @@ func TestBuildGatewayHandlerWrapsTrustedProxyError(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayHandlerRejectsMissingStateDependencies(t *testing.T) {
+	cfg := identityIntegrationConfig("", "", "https://api.weixin.qq.com")
+	redisClient := rediscache.Open(config.Redis{Addr: "127.0.0.1:1"})
+	defer redisClient.Close()
+
+	if _, err := buildGatewayHandler(nil, redisClient, cfg, nil, gatewayOverrides{}); err == nil ||
+		!strings.Contains(err.Error(), "construct Identity PostgreSQL repository") {
+		t.Fatalf("nil pool error = %v", err)
+	}
+	if _, err := buildGatewayHandler(&pgxpool.Pool{}, nil, cfg, nil, gatewayOverrides{}); err == nil ||
+		!strings.Contains(err.Error(), "construct Identity Redis OTP store") {
+		t.Fatalf("nil Redis error = %v", err)
+	}
+}
+
+func TestBuildGatewayHandlerReturnsWebPolicyErrorsWithoutPanicking(t *testing.T) {
+	tests := map[string]struct {
+		mutate func(*config.Config)
+		want   string
+	}{
+		"cookie": {
+			mutate: func(cfg *config.Config) { cfg.Identity.Web.CookieName = "bad cookie" },
+			want:   "construct Identity cookie policy",
+		},
+		"origin": {
+			mutate: func(cfg *config.Config) {
+				cfg.Identity.Web.AllowedOrigins = []string{"https://example.test/path"}
+			},
+			want: "construct Gateway CORS policy",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := identityIntegrationConfig("", "", "https://api.weixin.qq.com")
+			test.mutate(&cfg)
+			_, err := buildGatewayHandler(nil, nil, cfg, nil, gatewayOverrides{})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 type fixedBootstrapClock struct {
 	now time.Time
 }
@@ -228,7 +296,7 @@ func identityIntegrationConfig(databaseURL, redisAddress, weChatBaseURL string) 
 			WeChat:         config.WeChat{AppID: "wx-integration", AppSecret: "integration-secret", BaseURL: weChatBaseURL, Timeout: time.Second, IPPerHour: 60},
 			SMTP:           config.SMTP{Timeout: time.Second},
 			EmailDriver:    "memory",
-			EnabledClients: []string{"web", "wechat_mini"},
+			EnabledClients: []string{"wechat_mini"},
 			Web: config.WebSecurity{
 				CookieName:     "agri_refresh",
 				AllowedOrigins: []string{"http://localhost:3000"},

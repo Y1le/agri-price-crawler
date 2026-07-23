@@ -20,6 +20,10 @@ type Policy struct {
 	WeChatIPPerHour int
 	RefreshTTL      time.Duration
 	ReuseGrace      time.Duration
+	// EnabledClients limits session creation and refresh to configured client
+	// transports. An empty slice preserves the package default of enabling web
+	// and wechat_mini for callers that predate this policy field.
+	EnabledClients []ClientKind
 }
 
 // Dependencies contains every adapter required by Identity application use
@@ -90,6 +94,11 @@ func NewService(dependencies Dependencies, policy Policy) (*Service, error) {
 		random = cryptorand.Reader
 	}
 	policy.OTPPepper = append([]byte(nil), policy.OTPPepper...)
+	if len(policy.EnabledClients) == 0 {
+		policy.EnabledClients = []ClientKind{ClientWeb, ClientWeChatMini}
+	} else {
+		policy.EnabledClients = append([]ClientKind(nil), policy.EnabledClients...)
+	}
 
 	return &Service{
 		repository:        dependencies.Repository,
@@ -105,6 +114,16 @@ func NewService(dependencies Dependencies, policy Policy) (*Service, error) {
 }
 
 func validatePolicy(policy Policy) error {
+	seenClients := make(map[ClientKind]struct{}, len(policy.EnabledClients))
+	for _, client := range policy.EnabledClients {
+		if err := client.Validate(); err != nil {
+			return fmt.Errorf("%w: Policy.EnabledClients contains unsupported client %q", ErrInvalidRequest, client)
+		}
+		if _, exists := seenClients[client]; exists {
+			return fmt.Errorf("%w: Policy.EnabledClients contains duplicate client %q", ErrInvalidRequest, client)
+		}
+		seenClients[client] = struct{}{}
+	}
 	switch {
 	case len(policy.OTPPepper) < 32:
 		return fmt.Errorf("%w: Policy.OTPPepper must contain at least 32 bytes", ErrInvalidRequest)
@@ -129,6 +148,18 @@ func validatePolicy(policy Policy) error {
 	default:
 		return nil
 	}
+}
+
+func (s *Service) validateClient(client ClientKind) error {
+	if err := client.Validate(); err != nil {
+		return err
+	}
+	for _, enabled := range s.policy.EnabledClients {
+		if client == enabled {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: client kind %q is disabled", ErrInvalidRequest, client)
 }
 
 func isNilDependency(dependency any) bool {

@@ -91,7 +91,7 @@ func (s *Service) LoginEmail(
 	code string,
 	client ClientKind,
 ) (LoginResult, error) {
-	if err := client.Validate(); err != nil {
+	if err := s.validateClient(client); err != nil {
 		return LoginResult{}, err
 	}
 	email, err := NormalizeEmail(rawEmail)
@@ -125,7 +125,7 @@ func (s *Service) LoginWeChat(
 	rawSourceIP string,
 	client ClientKind,
 ) (LoginResult, error) {
-	if err := client.Validate(); err != nil {
+	if err := s.validateClient(client); err != nil {
 		return LoginResult{}, err
 	}
 	ipKey, err := sourceIPDigest(rawSourceIP)

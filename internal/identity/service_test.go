@@ -155,6 +155,20 @@ func TestNewServiceDefaultsClockAndRandom(t *testing.T) {
 	}
 }
 
+func TestNewServiceDefaultsEmptyEnabledClientsToCurrentPublicClients(t *testing.T) {
+	t.Parallel()
+
+	policy := validPolicy()
+	policy.EnabledClients = nil
+	service, err := NewService(validDependencies(), policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := service.policy.EnabledClients, []ClientKind{ClientWeb, ClientWeChatMini}; !equalClientKinds(got, want) {
+		t.Fatalf("EnabledClients = %v, want %v", got, want)
+	}
+}
+
 func TestNewServicePreservesInjectedClockAndRandom(t *testing.T) {
 	t.Parallel()
 
@@ -266,6 +280,16 @@ func TestNewServiceValidatesPolicy(t *testing.T) {
 			mutate: func(policy *Policy) { policy.ReuseGrace = policy.RefreshTTL },
 			want:   "ReuseGrace",
 		},
+		"unsupported enabled client": {
+			mutate: func(policy *Policy) { policy.EnabledClients = []ClientKind{ClientApp} },
+			want:   "EnabledClients",
+		},
+		"duplicate enabled client": {
+			mutate: func(policy *Policy) {
+				policy.EnabledClients = []ClientKind{ClientWeb, ClientWeb}
+			},
+			want: "EnabledClients",
+		},
 	}
 	for name, test := range tests {
 		test := test
@@ -296,9 +320,13 @@ func TestNewServiceDefensivelyCopiesSlices(t *testing.T) {
 	}
 
 	policy.OTPPepper[0] ^= 0xff
+	policy.EnabledClients[0] = ClientWeChatMini
 	participants[0] = secondFakeMergeParticipant{}
 	if service.policy.OTPPepper[0] != 7 {
 		t.Fatal("Policy.OTPPepper aliases caller memory")
+	}
+	if service.policy.EnabledClients[0] != ClientWeb {
+		t.Fatal("Policy.EnabledClients aliases caller memory")
 	}
 	if _, ok := service.mergeParticipants[0].(fakeMergeParticipant); !ok {
 		t.Fatal("MergeParticipants aliases caller slice")
@@ -327,6 +355,7 @@ func validPolicy() Policy {
 		WeChatIPPerHour: 60,
 		RefreshTTL:      30 * 24 * time.Hour,
 		ReuseGrace:      10 * time.Second,
+		EnabledClients:  []ClientKind{ClientWeb, ClientWeChatMini},
 	}
 }
 
@@ -336,6 +365,18 @@ func bytesOf(value byte, count int) []byte {
 		result[index] = value
 	}
 	return result
+}
+
+func equalClientKinds(left, right []ClientKind) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 type fakeRepository struct{}

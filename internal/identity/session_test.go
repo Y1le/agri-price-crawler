@@ -107,6 +107,28 @@ func TestCreateSessionReturnsNoResultWhenDurableInsertOrSigningFails(t *testing.
 	}
 }
 
+func TestCreateSessionRejectsDisabledClientBeforeMutation(t *testing.T) {
+	now := sessionTestNow()
+	user := sessionTestUser(now)
+	repository := newSessionRepository(user)
+	service := newSessionService(t, repository, &sessionTokenIssuer{}, now)
+	service.policy.EnabledClients = []ClientKind{ClientWeChatMini}
+
+	err := repository.WithinTx(context.Background(), func(tx Tx) error {
+		result, err := service.createSession(context.Background(), tx, user, ClientWeb, now)
+		if result != (LoginResult{}) {
+			t.Fatalf("result = %+v", result)
+		}
+		return err
+	})
+	if !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("error = %v", err)
+	}
+	if len(repository.state.sessions) != 0 || len(repository.state.tokens) != 0 {
+		t.Fatalf("disabled client mutated durable state: %+v", repository.state)
+	}
+}
+
 func TestRefreshRotatesAtomicallyInSessionThenTokenLockOrder(t *testing.T) {
 	now := sessionTestNow()
 	user, session, oldRaw, oldToken := sessionTestLogin(now)
@@ -199,6 +221,25 @@ func TestRefreshRejectsMissingTokenAndUnsupportedClient(t *testing.T) {
 	}
 	if len(*repository.calls) != initialCalls {
 		t.Fatal("unsupported client opened a transaction")
+	}
+}
+
+func TestRefreshRejectsDisabledClientBeforeOpeningTransaction(t *testing.T) {
+	now := sessionTestNow()
+	user := sessionTestUser(now)
+	repository := newSessionRepository(user)
+	service := newSessionService(t, repository, &sessionTokenIssuer{}, now)
+	service.policy.EnabledClients = []ClientKind{ClientWeChatMini}
+
+	if result, err := service.Refresh(
+		context.Background(),
+		"not-present",
+		ClientWeb,
+	); !errors.Is(err, ErrInvalidRequest) || result != (LoginResult{}) {
+		t.Fatalf("disabled client result = %+v, error = %v", result, err)
+	}
+	if len(*repository.calls) != 0 {
+		t.Fatalf("disabled client opened a transaction: %v", *repository.calls)
 	}
 }
 
