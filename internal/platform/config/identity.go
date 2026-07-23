@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"strings"
@@ -235,8 +236,10 @@ func (c Config) ValidateGateway() error {
 	if len(identity.OTP.Pepper) < 32 {
 		return fmt.Errorf("IDENTITY_OTP_PEPPER_BASE64 must contain at least 32 bytes")
 	}
-	if identity.OTP.TTL <= 0 || identity.OTP.TTL > maxOTPTTL {
-		return fmt.Errorf("IDENTITY_OTP_TTL must be positive and at most 15m")
+	if identity.OTP.TTL < time.Minute ||
+		identity.OTP.TTL%time.Minute != 0 ||
+		identity.OTP.TTL > maxOTPTTL {
+		return fmt.Errorf("IDENTITY_OTP_TTL must be whole minutes between 1m and 15m")
 	}
 	if identity.OTP.Attempts <= 0 || identity.OTP.Attempts > maxOTPAttempts {
 		return fmt.Errorf("IDENTITY_OTP_ATTEMPTS must be between 1 and 10")
@@ -377,8 +380,9 @@ func validateSMTP(smtp SMTP, environment string) error {
 	if smtp.Password == "" {
 		return fmt.Errorf("IDENTITY_SMTP_PASSWORD is required for smtp")
 	}
-	if smtp.From == "" {
-		return fmt.Errorf("IDENTITY_SMTP_FROM is required for smtp")
+	from, err := mail.ParseAddress(smtp.From)
+	if err != nil || from.Name != "" || from.Address != smtp.From {
+		return fmt.Errorf("IDENTITY_SMTP_FROM must be one bare mailbox address")
 	}
 	switch smtp.TLSMode {
 	case "implicit", "starttls":
@@ -386,10 +390,22 @@ func validateSMTP(smtp SMTP, environment string) error {
 		if environment == "production" {
 			return fmt.Errorf("IDENTITY_SMTP_TLS_MODE none is not allowed in production")
 		}
+		if !isLoopbackHost(smtp.Host) {
+			return fmt.Errorf("IDENTITY_SMTP_TLS_MODE none requires an exact loopback host")
+		}
 	default:
 		return fmt.Errorf("IDENTITY_SMTP_TLS_MODE must be implicit, starttls, or none")
 	}
 	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	switch host {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateHTTPBaseURL(name, value string, requireHTTPS bool) error {

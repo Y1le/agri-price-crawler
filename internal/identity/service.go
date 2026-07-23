@@ -108,8 +108,8 @@ func validatePolicy(policy Policy) error {
 	switch {
 	case len(policy.OTPPepper) < 32:
 		return fmt.Errorf("%w: Policy.OTPPepper must contain at least 32 bytes", ErrInvalidRequest)
-	case policy.OTPTTL <= 0:
-		return fmt.Errorf("%w: Policy.OTPTTL must be positive", ErrInvalidRequest)
+	case policy.OTPTTL < time.Minute || policy.OTPTTL%time.Minute != 0:
+		return fmt.Errorf("%w: Policy.OTPTTL must be one or more whole minutes", ErrInvalidRequest)
 	case policy.OTPAttempts <= 0:
 		return fmt.Errorf("%w: Policy.OTPAttempts must be positive", ErrInvalidRequest)
 	case policy.OTPCooldown <= 0:

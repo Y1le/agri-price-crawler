@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"mime/quotedprintable"
 	"net/mail"
 	netsmtp "net/smtp"
 	"strings"
@@ -65,19 +66,91 @@ func TestSenderSendsOneSafePlainTextMessageInProtocolOrder(t *testing.T) {
 	if subject != messageSubject {
 		t.Fatalf("subject = %q, want %q", subject, messageSubject)
 	}
-	if got := message.Header.Get("From"); got != "sender@example.com" {
-		t.Fatalf("From = %q", got)
+	from, err := mail.ParseAddress(message.Header.Get("From"))
+	if err != nil || from.Address != "sender@example.com" {
+		t.Fatalf("From = %q, error = %v", message.Header.Get("From"), err)
 	}
-	if got := message.Header.Get("To"); got != testRecipient {
-		t.Fatalf("To = %q", got)
+	to, err := mail.ParseAddress(message.Header.Get("To"))
+	if err != nil || to.Address != testRecipient {
+		t.Fatalf("To = %q, error = %v", message.Header.Get("To"), err)
 	}
 	body, err := io.ReadAll(message.Body)
 	if err != nil {
-		t.Fatalf("read body: %v", err)
+		t.Fatalf("read encoded body: %v", err)
+	}
+	if got := message.Header.Get("Content-Transfer-Encoding"); got != "quoted-printable" {
+		t.Fatalf("Content-Transfer-Encoding = %q, want quoted-printable", got)
+	}
+	body, err = io.ReadAll(quotedprintable.NewReader(bytes.NewReader(body)))
+	if err != nil {
+		t.Fatalf("decode body: %v", err)
 	}
 	const wantBody = "您的验证码是 123456，有效期 10 分钟。请勿向任何人泄露此验证码。"
 	if got := strings.TrimSuffix(string(body), "\r\n"); got != wantBody {
 		t.Fatalf("body = %q, want exact %q", got, wantBody)
+	}
+}
+
+func TestSenderTreatsAcceptedDATAAsDeliveryCommit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		configure func(*fakeClient)
+	}{
+		{
+			name: "Quit error",
+			configure: func(client *fakeClient) {
+				client.quitErr = errors.New("server disconnected after accepting DATA")
+			},
+		},
+		{
+			name: "Quit blocks until deadline",
+			configure: func(client *fakeClient) {
+				client.blockQuit = true
+			},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := testConfig()
+			cfg.Timeout = 30 * time.Millisecond
+			client := newFakeClient()
+			tt.configure(client)
+			sender, err := newSender(cfg, func(context.Context, config.SMTP) (smtpClient, error) {
+				return client, nil
+			})
+			if err != nil {
+				t.Fatalf("new sender: %v", err)
+			}
+
+			start := time.Now()
+			if err := sender.SendCode(context.Background(), testRecipient, testCode, time.Minute); err != nil {
+				t.Fatalf("accepted DATA reported as failure: %v", err)
+			}
+			if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+				t.Fatalf("best-effort Quit took %s", elapsed)
+			}
+		})
+	}
+}
+
+func TestSenderStillFailsBeforeDATAIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeClient()
+	client.dataCloseErr = errors.New("server rejected message")
+	sender, err := newSender(testConfig(), func(context.Context, config.SMTP) (smtpClient, error) {
+		return client, nil
+	})
+	if err != nil {
+		t.Fatalf("new sender: %v", err)
+	}
+	if err := sender.SendCode(context.Background(), testRecipient, testCode, time.Minute); err == nil {
+		t.Fatal("SendCode returned nil when DATA completion failed")
 	}
 }
 
@@ -149,6 +222,135 @@ func TestSenderRejectsCRLFBeforeDial(t *testing.T) {
 			}
 			if err == nil {
 				t.Fatal("unsafe header value was accepted")
+			}
+			if dials != 0 {
+				t.Fatalf("dial count = %d, want 0", dials)
+			}
+		})
+	}
+}
+
+func TestSenderRequiresBareMailboxAddressesBeforeDial(t *testing.T) {
+	t.Parallel()
+
+	t.Run("configured sender", func(t *testing.T) {
+		tests := []string{
+			"Sender <sender@example.com>",
+			"sender@example.com, second@example.com",
+			" sender@example.com",
+			"sender@example.com ",
+			"not-an-address",
+		}
+		for _, from := range tests {
+			from := from
+			t.Run(from, func(t *testing.T) {
+				cfg := testConfig()
+				cfg.From = from
+				dials := 0
+				if _, err := newSender(cfg, func(context.Context, config.SMTP) (smtpClient, error) {
+					dials++
+					return newFakeClient(), nil
+				}); err == nil {
+					t.Fatal("newSender accepted non-bare sender")
+				}
+				if dials != 0 {
+					t.Fatalf("dial count = %d, want 0", dials)
+				}
+			})
+		}
+	})
+
+	t.Run("recipient", func(t *testing.T) {
+		tests := []string{
+			"Person <person@example.com>",
+			"person@example.com, second@example.com",
+			" person@example.com",
+			"person@example.com ",
+			"not-an-address",
+		}
+		for _, recipient := range tests {
+			recipient := recipient
+			t.Run(recipient, func(t *testing.T) {
+				dials := 0
+				sender, err := newSender(testConfig(), func(context.Context, config.SMTP) (smtpClient, error) {
+					dials++
+					return newFakeClient(), nil
+				})
+				if err != nil {
+					t.Fatalf("new sender: %v", err)
+				}
+				err = sender.SendCode(context.Background(), recipient, testCode, time.Minute)
+				if err == nil {
+					t.Fatal("SendCode accepted non-bare recipient")
+				}
+				if dials != 0 {
+					t.Fatalf("dial count = %d, want 0", dials)
+				}
+				if strings.Contains(err.Error(), recipient) {
+					t.Fatalf("error disclosed recipient: %v", err)
+				}
+			})
+		}
+	})
+}
+
+func TestSenderRequiresSMTPUTF8ForInternationalizedEnvelope(t *testing.T) {
+	t.Parallel()
+
+	const internationalRecipient = "用户@example.com"
+	for _, supported := range []bool{false, true} {
+		supported := supported
+		t.Run(map[bool]string{false: "unsupported", true: "supported"}[supported], func(t *testing.T) {
+			client := newFakeClient()
+			client.extensions["SMTPUTF8"] = supported
+			sender, err := newSender(testConfig(), func(context.Context, config.SMTP) (smtpClient, error) {
+				return client, nil
+			})
+			if err != nil {
+				t.Fatalf("new sender: %v", err)
+			}
+
+			err = sender.SendCode(context.Background(), internationalRecipient, testCode, time.Minute)
+			if supported && err != nil {
+				t.Fatalf("SMTPUTF8 delivery failed: %v", err)
+			}
+			if !supported && err == nil {
+				t.Fatal("internationalized envelope sent without SMTPUTF8")
+			}
+			if !supported {
+				for _, event := range client.Events() {
+					if strings.HasPrefix(event, "auth") || strings.HasPrefix(event, "mail:") {
+						t.Fatalf("credentials or envelope sent before SMTPUTF8 rejection: %#v", client.Events())
+					}
+				}
+				if strings.Contains(err.Error(), internationalRecipient) {
+					t.Fatalf("error disclosed recipient: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestSenderRejectsInvalidExpiryBeforeDial(t *testing.T) {
+	t.Parallel()
+
+	for _, expiresIn := range []time.Duration{
+		0,
+		59 * time.Second,
+		time.Minute + time.Second,
+	} {
+		expiresIn := expiresIn
+		t.Run(expiresIn.String(), func(t *testing.T) {
+			dials := 0
+			sender, err := newSender(testConfig(), func(context.Context, config.SMTP) (smtpClient, error) {
+				dials++
+				return newFakeClient(), nil
+			})
+			if err != nil {
+				t.Fatalf("new sender: %v", err)
+			}
+			if err := sender.SendCode(context.Background(), testRecipient, testCode, expiresIn); err == nil {
+				t.Fatal("SendCode accepted invalid expiry")
 			}
 			if dials != 0 {
 				t.Fatalf("dial count = %d, want 0", dials)
@@ -300,6 +502,27 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestNewAllowsPlaintextSMTPOnlyOnExactLoopbackHosts(t *testing.T) {
+	t.Parallel()
+
+	for _, host := range []string{"localhost", "127.0.0.1", "::1"} {
+		cfg := testConfig()
+		cfg.Host = host
+		cfg.TLSMode = "none"
+		if _, err := New(cfg); err != nil {
+			t.Fatalf("New rejected loopback host %q: %v", host, err)
+		}
+	}
+	for _, host := range []string{"smtp.example.com", "localhost.example.com", "127.0.0.2"} {
+		cfg := testConfig()
+		cfg.Host = host
+		cfg.TLSMode = "none"
+		if _, err := New(cfg); err == nil {
+			t.Fatalf("New accepted remote plaintext host %q", host)
+		}
+	}
+}
+
 func testConfig() config.SMTP {
 	return config.SMTP{
 		Host:     "smtp.example.com",
@@ -313,18 +536,25 @@ func testConfig() config.SMTP {
 }
 
 type fakeClient struct {
-	mu        sync.Mutex
-	events    []string
-	message   bytes.Buffer
-	rcptCalls int
-	rcptErr   error
-	blockAuth bool
-	closed    chan struct{}
-	closeOnce sync.Once
+	mu           sync.Mutex
+	events       []string
+	message      bytes.Buffer
+	rcptCalls    int
+	rcptErr      error
+	dataCloseErr error
+	quitErr      error
+	blockAuth    bool
+	blockQuit    bool
+	extensions   map[string]bool
+	closed       chan struct{}
+	closeOnce    sync.Once
 }
 
 func newFakeClient() *fakeClient {
-	return &fakeClient{closed: make(chan struct{})}
+	return &fakeClient{
+		closed:     make(chan struct{}),
+		extensions: make(map[string]bool),
+	}
 }
 
 func (client *fakeClient) Hello(name string) error {
@@ -335,6 +565,12 @@ func (client *fakeClient) Hello(name string) error {
 func (client *fakeClient) StartTLS(cfg *tls.Config) error {
 	client.addEvent("starttls:" + cfg.ServerName)
 	return nil
+}
+
+func (client *fakeClient) Extension(name string) (bool, string) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.extensions[name], ""
 }
 
 func (client *fakeClient) Auth(netsmtp.Auth) error {
@@ -366,7 +602,11 @@ func (client *fakeClient) Data() (io.WriteCloser, error) {
 
 func (client *fakeClient) Quit() error {
 	client.addEvent("quit")
-	return nil
+	if client.blockQuit {
+		<-client.closed
+		return errors.New("closed")
+	}
+	return client.quitErr
 }
 
 func (client *fakeClient) Close() error {
@@ -413,7 +653,7 @@ func (writer *fakeDataWriter) Write(p []byte) (int, error) {
 
 func (writer *fakeDataWriter) Close() error {
 	writer.client.addEvent("data-close")
-	return nil
+	return writer.client.dataCloseErr
 }
 
 func equalStrings(left, right []string) bool {

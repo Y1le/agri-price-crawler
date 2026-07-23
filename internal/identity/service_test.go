@@ -226,6 +226,14 @@ func TestNewServiceValidatesPolicy(t *testing.T) {
 			mutate: func(policy *Policy) { policy.OTPTTL = 0 },
 			want:   "OTPTTL",
 		},
+		"sub-minute OTP TTL": {
+			mutate: func(policy *Policy) { policy.OTPTTL = 59 * time.Second },
+			want:   "OTPTTL",
+		},
+		"fractional-minute OTP TTL": {
+			mutate: func(policy *Policy) { policy.OTPTTL = time.Minute + time.Second },
+			want:   "OTPTTL",
+		},
 		"zero OTP attempts": {
 			mutate: func(policy *Policy) { policy.OTPAttempts = 0 },
 			want:   "OTPAttempts",

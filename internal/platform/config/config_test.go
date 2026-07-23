@@ -368,6 +368,8 @@ func TestIdentityGatewayValidationSMTP(t *testing.T) {
 		{name: "username", env: "IDENTITY_SMTP_USERNAME", value: "", message: "IDENTITY_SMTP_USERNAME"},
 		{name: "password", env: "IDENTITY_SMTP_PASSWORD", value: "", message: "IDENTITY_SMTP_PASSWORD"},
 		{name: "from", env: "IDENTITY_SMTP_FROM", value: "", message: "IDENTITY_SMTP_FROM"},
+		{name: "display-name from", env: "IDENTITY_SMTP_FROM", value: "Sender <sender@example.com>", message: "IDENTITY_SMTP_FROM"},
+		{name: "whitespace from", env: "IDENTITY_SMTP_FROM", value: " sender@example.com", message: "IDENTITY_SMTP_FROM"},
 		{name: "TLS mode", env: "IDENTITY_SMTP_TLS_MODE", value: "opportunistic", message: "IDENTITY_SMTP_TLS_MODE"},
 	}
 
@@ -394,6 +396,7 @@ func TestIdentityGatewayValidationAllowsDevelopmentPlaintextSMTP(t *testing.T) {
 	setValidIdentityEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
 	setValidSMTPEnv(t)
+	t.Setenv("IDENTITY_SMTP_HOST", "localhost")
 	t.Setenv("IDENTITY_SMTP_TLS_MODE", "none")
 
 	got, err := config.Load()
@@ -476,6 +479,64 @@ func TestIdentityGatewayValidationRejectsUnsafeUpperBounds(t *testing.T) {
 			err = got.ValidateGateway()
 			if err == nil || !strings.Contains(err.Error(), tt.message) {
 				t.Fatalf("ValidateGateway() error = %v, want field %s", err, tt.message)
+			}
+		})
+	}
+}
+
+func TestIdentityGatewayValidationRequiresWholeMinuteOTPTTL(t *testing.T) {
+	for _, value := range []string{"59s", "1m1s"} {
+		t.Run(value, func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv("IDENTITY_OTP_TTL", value)
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = got.ValidateGateway()
+			if err == nil || !strings.Contains(err.Error(), "IDENTITY_OTP_TTL") {
+				t.Fatalf("ValidateGateway() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestIdentityGatewayValidationAllowsPlaintextSMTPOnlyOnLoopback(t *testing.T) {
+	for _, host := range []string{"localhost", "127.0.0.1", "::1"} {
+		t.Run("allows_"+strings.ReplaceAll(host, ":", "_"), func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			setValidSMTPEnv(t)
+			t.Setenv("IDENTITY_SMTP_HOST", host)
+			t.Setenv("IDENTITY_SMTP_TLS_MODE", "none")
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := got.ValidateGateway(); err != nil {
+				t.Fatalf("ValidateGateway() rejected loopback SMTP: %v", err)
+			}
+		})
+	}
+
+	for _, host := range []string{"smtp.example.com", "localhost.example.com", "127.0.0.2"} {
+		t.Run("rejects_"+strings.ReplaceAll(host, ".", "_"), func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			setValidSMTPEnv(t)
+			t.Setenv("IDENTITY_SMTP_HOST", host)
+			t.Setenv("IDENTITY_SMTP_TLS_MODE", "none")
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = got.ValidateGateway()
+			if err == nil || !strings.Contains(err.Error(), "IDENTITY_SMTP_TLS_MODE") {
+				t.Fatalf("ValidateGateway() error = %v", err)
 			}
 		})
 	}
