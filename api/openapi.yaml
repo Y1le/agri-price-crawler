@@ -1,15 +1,18 @@
 openapi: 3.1.0
 info:
   title: Agri Price Crawler API
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    Infrastructure probes are root routes so that deployment systems can reach
-    them independently of product routing. Future product APIs use `/api/v1`.
+    Gateway contract for infrastructure probes and Identity. Probe routes stay
+    at the root; product APIs are versioned below `/api/v1`.
+servers:
+  - url: /
 paths:
   /livez:
     get:
+      operationId: getLiveness
       summary: Liveness probe
-      description: Reports whether the gateway process is alive.
+      description: Reports whether the Gateway process is alive.
       responses:
         '200':
           description: Gateway is alive.
@@ -19,8 +22,9 @@ paths:
                 $ref: '#/components/schemas/Health'
   /readyz:
     get:
+      operationId: getReadiness
       summary: Readiness probe
-      description: Reports whether the gateway is ready to serve traffic.
+      description: Reports whether the Gateway is ready to serve traffic.
       responses:
         '200':
           description: Gateway is ready.
@@ -29,28 +33,418 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
         '503':
-          description: Gateway is not ready.
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/auth/email/code:
+    post:
+      operationId: requestEmailLoginCode
+      summary: Send an email login code
+      description: |
+        Sends a one-time login code without revealing whether the email already
+        belongs to an account. A successful request is always accepted
+        asynchronously.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailCodeRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/CodeAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/email/login:
+    post:
+      operationId: loginWithEmail
+      summary: Log in with an email code
+      description: |
+        Creates a session after verifying the one-time code. Web responses set
+        the refresh token only in the secure HTTP-only cookie and omit
+        `refresh_token` from JSON. WeChat mini-program responses include
+        `refresh_token` in JSON and do not set the cookie.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailLoginRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/LoginSucceeded'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/wechat/login:
+    post:
+      operationId: loginWithWeChat
+      summary: Log in with a WeChat mini-program code
+      description: |
+        Exchanges a single-use `wx.login` code and creates a session. For
+        `wechat_mini`, the JSON response includes the refresh token. If `web`
+        is requested, the refresh token is delivered only by secure HTTP-only
+        cookie and omitted from JSON.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WeChatLoginRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/LoginSucceeded'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshSession
+      summary: Rotate a refresh token
+      description: |
+        Exactly one refresh-token transport is required. Web clients send
+        `__Secure-agri_refresh` and an empty JSON object; the request Origin
+        must be allowed. WeChat mini-program clients send `refresh_token` in
+        JSON and no refresh cookie. Supplying both or neither returns `400`.
+        Web responses rotate the cookie and omit the token from JSON; mini
+        responses include the rotated token in JSON.
+      security:
+        - refreshCookie: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/LoginSucceeded'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Log out the current session
+      description: Revokes the authenticated session and clears the Web refresh cookie.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/LogoutSucceeded'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/logout-all:
+    post:
+      operationId: logoutAll
+      summary: Log out every session
+      description: Revokes all sessions for the authenticated account and clears the Web refresh cookie.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/LogoutSucceeded'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/bind/email/code:
+    post:
+      operationId: requestBindEmailCode
+      summary: Send an email binding code
+      description: Sends a one-time code after confirming that the access-token session remains active.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailCodeRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/CodeAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/bind/email:
+    post:
+      operationId: bindEmail
+      summary: Bind a verified email
+      description: |
+        Binds the verified email. If it belongs to another account, the
+        accounts may be merged and all old sessions revoked. In that case the
+        response includes replacement session credentials using the same Web
+        cookie versus mini-program JSON transport rules as login. Without a
+        merge, only `account` is returned.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BindEmailRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/BindSucceeded'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/bind/wechat:
+    post:
+      operationId: bindWeChat
+      summary: Bind a verified WeChat identity
+      description: |
+        Exchanges a single-use WeChat code and binds the resulting identity.
+        A merge returns replacement session credentials. Web merge responses
+        omit `refresh_token` from JSON and rotate the secure cookie; mini
+        responses include the token in JSON.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BindWeChatRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/BindSucceeded'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/me:
+    get:
+      operationId: getCurrentAccount
+      summary: Get the current account
+      description: |
+        Returns the account ID, status, creation time, and bound identity
+        summaries. Identity displays are masked; full email addresses, OpenID,
+        UnionID, provider credentials, and session secrets are never returned.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current account with masked identities.
           content:
-            application/problem+json:
+            application/json:
               schema:
-                $ref: '#/components/schemas/Problem'
+                $ref: '#/components/schemas/AccountResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Ed25519-signed access token in `Authorization: Bearer <token>`."
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-agri_refresh
+      description: Secure, HTTP-only Web refresh-token cookie.
+
+  responses:
+    CodeAccepted:
+      description: The verification-code request was accepted.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AcceptedResponse'
+    LoginSucceeded:
+      description: |
+        Session credentials. Web responses set `__Secure-agri_refresh` and omit
+        `refresh_token` from JSON; mini-program responses include it in JSON.
+      headers:
+        Set-Cookie:
+          description: Present for Web sessions; contains the rotated secure HTTP-only refresh cookie.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LoginResponse'
+    BindSucceeded:
+      description: |
+        Bound account. Replacement credentials are present only after a merge
+        invalidates the current session, using the same transport as login.
+      headers:
+        Set-Cookie:
+          description: Present only when a Web merge creates a replacement session.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BindResponse'
+    LogoutSucceeded:
+      description: Session revocation completed.
+      headers:
+        Set-Cookie:
+          description: Clears the Web refresh cookie.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StatusResponse'
+    BadRequest:
+      description: The request body, parameters, proof, or token transport is invalid.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: The access or refresh token is missing, invalid, expired, or reused.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: The account is disabled or the Web request origin is not allowed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: The identity cannot be bound to the current account.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TooManyRequests:
+      description: A verification or upstream-exchange rate limit was reached.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ServiceUnavailable:
+      description: A required store, email service, or WeChat service is temporarily unavailable.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    InternalServerError:
+      description: An unexpected internal error occurred.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
   schemas:
     Health:
       type: object
+      additionalProperties: false
       required:
         - status
       properties:
         status:
           type: string
+          const: ok
           example: ok
+
     Problem:
       type: object
+      additionalProperties: false
       required:
         - type
         - title
         - status
         - code
+        - trace_id
       properties:
         type:
           type: string
@@ -58,10 +452,253 @@ components:
           example: about:blank
         title:
           type: string
-          example: Service Not Ready
+          minLength: 1
+          example: 服务暂不可用
         status:
           type: integer
+          minimum: 400
+          maximum: 599
           example: 503
         code:
           type: string
+          minLength: 1
           example: service_not_ready
+        trace_id:
+          type: string
+          minLength: 1
+          description: Request correlation identifier safe to report to support.
+        detail:
+          type: string
+          description: Client-safe explanation; never contains secrets or internal diagnostics.
+
+    BoundIdentitySummary:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - display
+      properties:
+        kind:
+          type: string
+          enum:
+            - email
+            - wechat_mini
+        display:
+          type: string
+          minLength: 1
+          description: |
+            Masked display text only, such as `a***@example.com`. It never
+            contains a full email, OpenID, UnionID, or provider credential.
+
+    UserSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - created_at
+        - identities
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - active
+            - merged
+            - disabled
+        created_at:
+          type: string
+          format: date-time
+        identities:
+          type: array
+          description: Bound identities represented only by masked display values.
+          items:
+            $ref: '#/components/schemas/BoundIdentitySummary'
+
+    AccountResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - account
+      properties:
+        account:
+          $ref: '#/components/schemas/UserSummary'
+
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - access_token
+        - token_type
+        - expires_in
+        - account
+      properties:
+        access_token:
+          type: string
+          minLength: 1
+        token_type:
+          type: string
+          const: Bearer
+        expires_in:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: Remaining access-token lifetime in seconds.
+          example: 900
+        account:
+          $ref: '#/components/schemas/UserSummary'
+        refresh_token:
+          type: string
+          minLength: 1
+          description: |
+            Present only for `wechat_mini`. Web responses deliberately omit
+            this field and deliver the token through the secure HTTP-only cookie.
+
+    BindResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - account
+      dependentRequired:
+        access_token:
+          - token_type
+          - expires_in
+        token_type:
+          - access_token
+          - expires_in
+        expires_in:
+          - access_token
+          - token_type
+        refresh_token:
+          - access_token
+          - token_type
+          - expires_in
+      properties:
+        account:
+          $ref: '#/components/schemas/UserSummary'
+        access_token:
+          type: string
+          minLength: 1
+          description: Present only when a merge creates a replacement session.
+        token_type:
+          type: string
+          const: Bearer
+          description: Present only with replacement session credentials.
+        expires_in:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: Present only with replacement session credentials.
+        refresh_token:
+          type: string
+          minLength: 1
+          description: |
+            Present only for a `wechat_mini` replacement session after a merge.
+            A Web replacement token is omitted from JSON and delivered only
+            through the secure HTTP-only cookie.
+
+    EmailCodeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+
+    EmailLoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - code
+        - client_kind
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+        client_kind:
+          $ref: '#/components/schemas/ClientKind'
+
+    WeChatLoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - client_kind
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 256
+        client_kind:
+          $ref: '#/components/schemas/ClientKind'
+
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+          description: Required for `wechat_mini`; must be absent when the Web cookie is sent.
+
+    BindEmailRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - code
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+
+    BindWeChatRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 256
+
+    ClientKind:
+      type: string
+      enum:
+        - web
+        - wechat_mini
+
+    AcceptedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: accepted
+
+    StatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: ok
