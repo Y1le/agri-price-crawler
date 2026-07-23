@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -228,6 +229,140 @@ func TestRepositoryRollsBackErrorsAndPanics(t *testing.T) {
 		})
 	}()
 	assertUserAbsent(t, ctx, pool, panicUser.ID)
+}
+
+func TestRepositoryMapsDatabaseErrorsReturnedByCallback(t *testing.T) {
+	ctx, _, repository := setupRepository(t)
+	now := time.Date(2026, time.July, 23, 9, 30, 0, 0, time.UTC)
+	user := newUser(now)
+	if err := repository.WithinTx(ctx, func(tx identity.Tx) error {
+		return tx.InsertUser(ctx, user)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := repository.WithinTx(ctx, func(tx identity.Tx) error {
+		var userID uuid.UUID
+		return tx.SQL().QueryRow(
+			ctx,
+			"SELECT id FROM identity_users WHERE id = $1",
+			uuid.New(),
+		).Scan(&userID)
+	})
+	if !errors.Is(err, identity.ErrNotFound) {
+		t.Fatalf("callback no-rows error = %v, want ErrNotFound", err)
+	}
+
+	err = repository.WithinTx(ctx, func(tx identity.Tx) error {
+		_, err := tx.SQL().Exec(ctx, `
+			INSERT INTO identity_users (id, status, created_at, updated_at)
+			VALUES ($1, 'active', $2, $2)
+		`, user.ID, now)
+		return err
+	})
+	if !errors.Is(err, identity.ErrConflict) {
+		t.Fatalf("callback SQLSTATE 23505 error = %v, want ErrConflict", err)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, 25*time.Millisecond)
+	defer cancel()
+	err = repository.WithinTx(timeoutCtx, func(tx identity.Tx) error {
+		_, err := tx.SQL().Exec(timeoutCtx, "SELECT pg_sleep(1)")
+		return err
+	})
+	if !errors.Is(err, identity.ErrStateUnavailable) {
+		t.Fatalf("callback timeout error = %v, want ErrStateUnavailable", err)
+	}
+
+	domainErr := fmt.Errorf("use case validation: %w", identity.ErrInvalidRequest)
+	err = repository.WithinTx(ctx, func(identity.Tx) error { return domainErr })
+	if !errors.Is(err, identity.ErrInvalidRequest) {
+		t.Fatalf("callback domain error = %v, want preserved ErrInvalidRequest", err)
+	}
+}
+
+func TestRepositoryUserSummaryUsesOneRepeatableSnapshot(t *testing.T) {
+	ctx, pool, repository := setupRepository(t)
+	now := time.Date(2026, time.July, 23, 9, 45, 0, 0, time.UTC)
+	user := newUser(now)
+	email := identity.ExternalIdentity{
+		ID:         uuid.New(),
+		UserID:     user.ID,
+		Kind:       identity.IdentityEmail,
+		Issuer:     "email",
+		Subject:    "snapshot@example.com",
+		VerifiedAt: now,
+		CreatedAt:  now,
+	}
+	if err := repository.WithinTx(ctx, func(tx identity.Tx) error {
+		if err := tx.InsertUser(ctx, user); err != nil {
+			return err
+		}
+		return tx.InsertIdentity(ctx, email)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	lockTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockTx.Rollback(ctx) //nolint:errcheck // Safe after commit.
+	if _, err := lockTx.Exec(ctx, "LOCK TABLE identity_identities IN ACCESS EXCLUSIVE MODE"); err != nil {
+		t.Fatal(err)
+	}
+
+	type summaryResult struct {
+		user       identity.User
+		identities []identity.ExternalIdentity
+		err        error
+	}
+	result := make(chan summaryResult, 1)
+	go func() {
+		gotUser, gotIdentities, err := repository.UserSummary(context.Background(), user.ID)
+		result <- summaryResult{user: gotUser, identities: gotIdentities, err: err}
+	}()
+
+	waitForBlockedIdentityQuery(t, ctx, pool)
+	if _, err := lockTx.Exec(ctx, "DELETE FROM identity_identities WHERE id = $1", email.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := lockTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if !usersEqual(got.user, user) {
+			t.Fatalf("summary user = %+v, want %+v", got.user, user)
+		}
+		if len(got.identities) != 1 || !externalIdentitiesEqual(got.identities[0], email) {
+			t.Fatalf("summary identities = %+v, want pre-delete snapshot", got.identities)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for UserSummary")
+	}
+}
+
+func TestRepositoryUserSummaryRetainsUserWithoutIdentities(t *testing.T) {
+	ctx, _, repository := setupRepository(t)
+	user := newUser(time.Date(2026, time.July, 23, 9, 50, 0, 0, time.UTC))
+	if err := repository.WithinTx(ctx, func(tx identity.Tx) error {
+		return tx.InsertUser(ctx, user)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	gotUser, identities, err := repository.UserSummary(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usersEqual(gotUser, user) || len(identities) != 0 {
+		t.Fatalf("UserSummary() = %+v, %+v; want user with no identities", gotUser, identities)
+	}
 }
 
 func TestRepositoryConstraintsAndAffectedRowFences(t *testing.T) {
@@ -515,6 +650,118 @@ func TestRepositoryConcurrentIdentityConflict(t *testing.T) {
 	}
 }
 
+func TestRepositoryRefreshLockOrderDoesNotDeadlockRevokeSession(t *testing.T) {
+	ctx, _, repository := setupRepository(t)
+	now := time.Date(2026, time.July, 23, 14, 0, 0, 0, time.UTC)
+	user := newUser(now)
+	session := newSession(user.ID, identity.ClientWeb, now)
+	token := newRefreshToken(session.ID, 21, now)
+	insertSessionsAndTokens(t, ctx, repository, user, []identity.Session{session}, []identity.RefreshTokenRecord{token})
+
+	sessionLocked := make(chan struct{})
+	continueRefresh := make(chan struct{})
+	refreshDone := make(chan error, 1)
+	go func() {
+		refreshDone <- repository.WithinTx(context.Background(), func(tx identity.Tx) error {
+			if err := setFastTransactionTimeouts(context.Background(), tx); err != nil {
+				return err
+			}
+			unlockedToken, err := tx.FindRefreshToken(context.Background(), token.Hash, false)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.FindSession(context.Background(), unlockedToken.SessionID, true); err != nil {
+				return err
+			}
+			close(sessionLocked)
+			<-continueRefresh
+			_, err = tx.FindRefreshToken(context.Background(), token.Hash, true)
+			return err
+		})
+	}()
+	select {
+	case <-sessionLocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for refresh-style session lock")
+	}
+
+	revokeStarted := make(chan struct{})
+	revokeDone := make(chan error, 1)
+	go func() {
+		revokeDone <- repository.WithinTx(context.Background(), func(tx identity.Tx) error {
+			if err := setFastTransactionTimeouts(context.Background(), tx); err != nil {
+				return err
+			}
+			close(revokeStarted)
+			return tx.RevokeSession(context.Background(), session.ID, now.Add(time.Minute), "logout")
+		})
+	}()
+	<-revokeStarted
+	close(continueRefresh)
+
+	assertConcurrentTransactionsComplete(t, refreshDone, revokeDone)
+}
+
+func TestRepositoryRefreshLockOrderDoesNotDeadlockRevokeUserSessions(t *testing.T) {
+	ctx, _, repository := setupRepository(t)
+	now := time.Date(2026, time.July, 23, 14, 30, 0, 0, time.UTC)
+	user := newUser(now)
+	sessions := []identity.Session{
+		newSession(user.ID, identity.ClientWeb, now),
+		newSession(user.ID, identity.ClientWeChatMini, now.Add(time.Minute)),
+	}
+	sessions[0].ID = uuid.MustParse("00000000-0000-0000-0000-000000000101")
+	sessions[1].ID = uuid.MustParse("00000000-0000-0000-0000-000000000102")
+	tokens := []identity.RefreshTokenRecord{
+		newRefreshToken(sessions[0].ID, 22, now),
+		newRefreshToken(sessions[1].ID, 23, now.Add(time.Minute)),
+	}
+	insertSessionsAndTokens(t, ctx, repository, user, sessions, tokens)
+
+	sessionLocked := make(chan struct{})
+	continueRefresh := make(chan struct{})
+	refreshDone := make(chan error, 1)
+	go func() {
+		refreshDone <- repository.WithinTx(context.Background(), func(tx identity.Tx) error {
+			if err := setFastTransactionTimeouts(context.Background(), tx); err != nil {
+				return err
+			}
+			unlockedToken, err := tx.FindRefreshToken(context.Background(), tokens[1].Hash, false)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.FindSession(context.Background(), unlockedToken.SessionID, true); err != nil {
+				return err
+			}
+			close(sessionLocked)
+			<-continueRefresh
+			_, err = tx.FindRefreshToken(context.Background(), tokens[1].Hash, true)
+			return err
+		})
+	}()
+	select {
+	case <-sessionLocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for refresh-style session lock")
+	}
+
+	revokeStarted := make(chan struct{})
+	revokeDone := make(chan error, 1)
+	go func() {
+		revokeDone <- repository.WithinTx(context.Background(), func(tx identity.Tx) error {
+			if err := setFastTransactionTimeouts(context.Background(), tx); err != nil {
+				return err
+			}
+			close(revokeStarted)
+			return tx.RevokeUserSessions(context.Background(), user.ID, now.Add(2*time.Minute), "logout_all")
+		})
+	}()
+	<-revokeStarted
+	close(continueRefresh)
+
+	assertConcurrentTransactionsComplete(t, refreshDone, revokeDone)
+}
+
 func setupRepository(t *testing.T) (context.Context, *pgxpool.Pool, identity.Repository) {
 	t.Helper()
 
@@ -538,6 +785,80 @@ func setupRepository(t *testing.T) (context.Context, *pgxpool.Pool, identity.Rep
 		t.Fatal(err)
 	}
 	return ctx, pool, identitypostgres.NewRepository(pool)
+}
+
+func insertSessionsAndTokens(
+	t *testing.T,
+	ctx context.Context,
+	repository identity.Repository,
+	user identity.User,
+	sessions []identity.Session,
+	tokens []identity.RefreshTokenRecord,
+) {
+	t.Helper()
+	if err := repository.WithinTx(ctx, func(tx identity.Tx) error {
+		if err := tx.InsertUser(ctx, user); err != nil {
+			return err
+		}
+		for _, session := range sessions {
+			if err := tx.InsertSession(ctx, session); err != nil {
+				return err
+			}
+		}
+		for _, token := range tokens {
+			if err := tx.InsertRefreshToken(ctx, token); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setFastTransactionTimeouts(ctx context.Context, tx identity.Tx) error {
+	_, err := tx.SQL().Exec(ctx, "SET LOCAL lock_timeout = '1s'; SET LOCAL statement_timeout = '2s'")
+	return err
+}
+
+func assertConcurrentTransactionsComplete(t *testing.T, transactions ...<-chan error) {
+	t.Helper()
+	for index, transaction := range transactions {
+		select {
+		case err := <-transaction:
+			if err != nil {
+				t.Fatalf("concurrent transaction %d: %v", index+1, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for concurrent transaction %d", index+1)
+		}
+	}
+}
+
+func waitForBlockedIdentityQuery(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var blocked bool
+		err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_stat_activity
+				WHERE datname = current_database()
+				  AND pid <> pg_backend_pid()
+				  AND wait_event_type = 'Lock'
+				  AND query LIKE '%identity_identities%'
+			)
+		`).Scan(&blocked)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for UserSummary identity query to block")
 }
 
 func testDatabaseURL(t *testing.T) string {

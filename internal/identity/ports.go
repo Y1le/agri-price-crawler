@@ -15,6 +15,11 @@ type Repository interface {
 }
 
 // Tx is the complete durable transaction contract used by Identity use cases.
+// Workflows that touch both sessions and refresh tokens must discover the
+// session without locking the token, lock session rows in UUID order, then
+// lock or mutate refresh-token rows in UUID order. A refresh must therefore
+// perform an unlocked token lookup, lock its session, and re-read the token
+// with a lock before validating or mutating it.
 type Tx interface {
 	SQL() platformpostgres.Tx
 	FindIdentity(context.Context, IdentityKind, string, string, bool) (ExternalIdentity, error)
@@ -28,7 +33,9 @@ type Tx interface {
 	InsertSession(context.Context, Session) error
 	FindSession(context.Context, uuid.UUID, bool) (Session, error)
 	ExtendSession(context.Context, uuid.UUID, time.Time, time.Time) error
+	// RevokeSession locks the session before its refresh-token rows.
 	RevokeSession(context.Context, uuid.UUID, time.Time, string) error
+	// RevokeUserSessions locks sessions and then refresh tokens, each in UUID order.
 	RevokeUserSessions(context.Context, uuid.UUID, time.Time, string) error
 	InsertRefreshToken(context.Context, RefreshTokenRecord) error
 	FindRefreshToken(context.Context, [32]byte, bool) (RefreshTokenRecord, error)

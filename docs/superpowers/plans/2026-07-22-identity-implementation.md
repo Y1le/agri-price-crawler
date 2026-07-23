@@ -795,7 +795,21 @@ Expected: FAIL because session use cases do not exist.
 
 - [ ] **Step 4: Add atomic refresh rotation**
 
-Validate the requested client, hash the presented token, lock its row and session, require `session.Client == client`, reject expired/revoked state, and handle consumed tokens as follows: within `ReuseGrace` return `ErrTokenInvalid` without mutation; outside the grace revoke the session with reason `refresh_token_reused`, set a post-commit result to `ErrTokenReused`, return nil from the transaction callback so revocation commits, then return the post-commit error. For a fresh token, insert replacement, consume old token with `replacement_token_id`, extend session, and return newly issued credentials with `LoginResult.Client` copied from the durable session.
+Validate the requested client and hash the presented token. Inside the
+transaction, first perform an unlocked token lookup only to discover its
+`SessionID`; never lock a refresh-token row before its session. Lock the
+session row, then re-read the token with `FOR UPDATE` and verify that it still
+belongs to the locked session before validating or mutating either row. This
+session-then-token order must match logout and logout-all; repository bulk
+revocation locks session rows in UUID order and then token rows in UUID order.
+Require `session.Client == client`, reject expired/revoked state, and handle
+consumed tokens as follows: within `ReuseGrace` return `ErrTokenInvalid`
+without mutation; outside the grace revoke the session with reason
+`refresh_token_reused`, set a post-commit result to `ErrTokenReused`, return
+nil from the transaction callback so revocation commits, then return the
+post-commit error. For a fresh token, insert replacement, consume old token
+with `replacement_token_id`, extend session, and return newly issued
+credentials with `LoginResult.Client` copied from the durable session.
 
 - [ ] **Step 5: Add logout and current-user behavior**
 

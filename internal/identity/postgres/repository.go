@@ -39,6 +39,14 @@ func NewRepository(pool *pgxpool.Pool) identity.Repository {
 }
 
 func (r *repository) WithinTx(ctx context.Context, fn func(identity.Tx) error) error {
+	return r.runTransaction(ctx, pgx.TxOptions{}, fn)
+}
+
+func (r *repository) runTransaction(
+	ctx context.Context,
+	options pgx.TxOptions,
+	fn func(identity.Tx) error,
+) error {
 	if r == nil || r.pool == nil {
 		return fmt.Errorf("begin identity transaction: %w", identity.ErrStateUnavailable)
 	}
@@ -46,7 +54,7 @@ func (r *repository) WithinTx(ctx context.Context, fn func(identity.Tx) error) e
 		return fmt.Errorf("run identity transaction: callback is nil")
 	}
 
-	pgxTx, err := r.pool.Begin(ctx)
+	pgxTx, err := r.pool.BeginTx(ctx, options)
 	if err != nil {
 		return mapDatabaseError("begin identity transaction", err)
 	}
@@ -62,7 +70,7 @@ func (r *repository) WithinTx(ctx context.Context, fn func(identity.Tx) error) e
 	}()
 
 	if err := fn(&transaction{tx: pgxTx}); err != nil {
-		return err
+		return mapDatabaseError("run identity transaction", err)
 	}
 	if err := pgxTx.Commit(ctx); err != nil {
 		return mapDatabaseError("commit identity transaction", err)
@@ -79,7 +87,10 @@ func (r *repository) UserSummary(
 		user       identity.User
 		identities []identity.ExternalIdentity
 	)
-	err := r.WithinTx(ctx, func(tx identity.Tx) error {
+	err := r.runTransaction(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	}, func(tx identity.Tx) error {
 		var err error
 		user, err = tx.FindUser(ctx, userID, false)
 		if err != nil {
@@ -400,15 +411,31 @@ func (t *transaction) RevokeSession(
 		return err
 	}
 
+	const lockTokens = `
+		SELECT id
+		FROM identity_refresh_tokens
+		WHERE session_id = $1
+		  AND revoked_at IS NULL
+		ORDER BY id
+		FOR UPDATE`
+	tokenIDs, err := t.lockUUIDRows(ctx, "lock session refresh tokens", lockTokens, sessionID)
+	if err != nil {
+		return err
+	}
+
 	const revokeTokens = `
 		UPDATE identity_refresh_tokens
 		SET revoked_at = $2
 		WHERE session_id = $1
 		  AND revoked_at IS NULL`
-	if _, err := t.tx.Exec(ctx, revokeTokens, sessionID, revokedAt); err != nil {
-		return mapDatabaseError("revoke session refresh tokens", err)
-	}
-	return nil
+	return t.requireRows(
+		ctx,
+		"revoke session refresh tokens",
+		int64(len(tokenIDs)),
+		revokeTokens,
+		sessionID,
+		revokedAt,
+	)
 }
 
 func (t *transaction) RevokeUserSessions(
@@ -417,28 +444,70 @@ func (t *transaction) RevokeUserSessions(
 	revokedAt time.Time,
 	reason string,
 ) error {
+	const lockSessions = `
+		SELECT id
+		FROM identity_sessions
+		WHERE user_id = $1
+		  AND revoked_at IS NULL
+		ORDER BY id
+		FOR UPDATE`
+	sessionIDs, err := t.lockUUIDRows(ctx, "lock user sessions", lockSessions, userID)
+	if err != nil {
+		return err
+	}
+	if len(sessionIDs) == 0 {
+		return nil
+	}
+
+	const lockTokens = `
+		SELECT id
+		FROM identity_refresh_tokens
+		WHERE session_id = ANY($1)
+		  AND revoked_at IS NULL
+		ORDER BY id
+		FOR UPDATE`
+	tokenIDs, err := t.lockUUIDRows(
+		ctx,
+		"lock user refresh tokens",
+		lockTokens,
+		sessionIDs,
+	)
+	if err != nil {
+		return err
+	}
+
 	const revokeSessions = `
 		UPDATE identity_sessions
 		SET
 			revoked_at = $2,
 			revoked_reason = $3
-		WHERE user_id = $1
+		WHERE id = ANY($1)
 		  AND revoked_at IS NULL`
-	if _, err := t.tx.Exec(ctx, revokeSessions, userID, revokedAt, reason); err != nil {
-		return mapDatabaseError("revoke user sessions", err)
+	if err := t.requireRows(
+		ctx,
+		"revoke user sessions",
+		int64(len(sessionIDs)),
+		revokeSessions,
+		sessionIDs,
+		revokedAt,
+		reason,
+	); err != nil {
+		return err
 	}
 
 	const revokeTokens = `
-		UPDATE identity_refresh_tokens AS tokens
+		UPDATE identity_refresh_tokens
 		SET revoked_at = $2
-		FROM identity_sessions AS sessions
-		WHERE sessions.id = tokens.session_id
-		  AND sessions.user_id = $1
-		  AND tokens.revoked_at IS NULL`
-	if _, err := t.tx.Exec(ctx, revokeTokens, userID, revokedAt); err != nil {
-		return mapDatabaseError("revoke user refresh tokens", err)
-	}
-	return nil
+		WHERE session_id = ANY($1)
+		  AND revoked_at IS NULL`
+	return t.requireRows(
+		ctx,
+		"revoke user refresh tokens",
+		int64(len(tokenIDs)),
+		revokeTokens,
+		sessionIDs,
+		revokedAt,
+	)
 }
 
 func (t *transaction) InsertRefreshToken(
@@ -569,6 +638,55 @@ func (t *transaction) requireOne(
 		return fmt.Errorf("%s: %w", operation, identity.ErrConflict)
 	}
 	return nil
+}
+
+func (t *transaction) requireRows(
+	ctx context.Context,
+	operation string,
+	expected int64,
+	query string,
+	args ...any,
+) error {
+	tag, err := t.tx.Exec(ctx, query, args...)
+	if err != nil {
+		return mapDatabaseError(operation, err)
+	}
+	if tag.RowsAffected() != expected {
+		return fmt.Errorf(
+			"%s: expected %d affected rows, got %d: %w",
+			operation,
+			expected,
+			tag.RowsAffected(),
+			identity.ErrConflict,
+		)
+	}
+	return nil
+}
+
+func (t *transaction) lockUUIDRows(
+	ctx context.Context,
+	operation string,
+	query string,
+	args ...any,
+) ([]uuid.UUID, error) {
+	rows, err := t.tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, mapDatabaseError(operation, err)
+	}
+	defer rows.Close()
+
+	ids := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, mapDatabaseError(operation, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, mapDatabaseError(operation, err)
+	}
+	return ids, nil
 }
 
 type rowScanner interface {
