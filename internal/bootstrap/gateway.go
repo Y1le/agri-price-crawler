@@ -16,6 +16,10 @@ import (
 
 // RunGateway assembles and runs the HTTP gateway until ctx is cancelled.
 func RunGateway(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	if err := cfg.ValidateGateway(); err != nil {
+		return fmt.Errorf("validate Gateway configuration: %w", err)
+	}
+
 	pool, err := openPostgres(ctx, cfg.Postgres.URL)
 	if err != nil {
 		return err
