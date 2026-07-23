@@ -15,6 +15,7 @@ type Config struct {
 	Redis       Redis
 	Worker      Worker
 	Identity    Identity
+	Ingestion   Ingestion
 }
 
 type Gateway struct {
@@ -85,6 +86,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	ingestion, err := loadIngestion(environment)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		Environment: environment,
@@ -96,8 +101,9 @@ func Load() (Config, error) {
 			Password: os.Getenv("REDIS_PASSWORD"),
 			DB:       redisDB,
 		},
-		Worker:   Worker{PollInterval: pollInterval, BatchSize: batchSize, LeaseDuration: leaseDuration},
-		Identity: identity,
+		Worker:    Worker{PollInterval: pollInterval, BatchSize: batchSize, LeaseDuration: leaseDuration},
+		Identity:  identity,
+		Ingestion: ingestion,
 	}, nil
 }
 

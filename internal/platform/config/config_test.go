@@ -47,6 +47,14 @@ func clearIdentityEnv(t *testing.T) {
 		"IDENTITY_COOKIE_SECURE",
 		"IDENTITY_WEB_ALLOWED_ORIGINS",
 		"IDENTITY_TRUSTED_PROXIES",
+		"INGESTION_HUINONG_ENABLED",
+		"INGESTION_HUINONG_BASE_URL",
+		"INGESTION_HUINONG_TIMEOUT",
+		"INGESTION_HUINONG_DEVICE_ID",
+		"INGESTION_HUINONG_SECRET",
+		"INGESTION_REJECT_RATIO_MAX",
+		"INGESTION_RAW_RETENTION",
+		"INGESTION_SCHEDULE_TIMEZONE",
 	} {
 		t.Setenv(name, "")
 		if name == "IDENTITY_ENABLED_CLIENTS" {
@@ -82,6 +90,64 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if got.Worker.PollInterval != time.Second || got.Worker.BatchSize != 4 || got.Worker.LeaseDuration != 5*time.Minute {
 		t.Fatalf("got %+v", got.Worker)
+	}
+	if got.Ingestion.Huinong.Enabled || got.Ingestion.Huinong.Timeout != 15*time.Second ||
+		got.Ingestion.RejectRatioMaxBasisPoints != 500 || got.Ingestion.RawRetention != 720*time.Hour ||
+		got.Ingestion.ScheduleTimezone != "Asia/Shanghai" {
+		t.Fatalf("ingestion defaults = %+v", got.Ingestion)
+	}
+}
+
+func TestLoadRejectsInvalidIngestionRejectRatio(t *testing.T) {
+	for _, value := range []string{"-0.01", "0.2001", "0.00001", "1/20", "bad"} {
+		t.Run(value, func(t *testing.T) {
+			clearIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv("INGESTION_REJECT_RATIO_MAX", value)
+
+			_, err := config.Load()
+			if err == nil || !strings.Contains(err.Error(), "INGESTION_REJECT_RATIO_MAX") {
+				t.Fatalf("Load() error = %v, want reject ratio validation", err)
+			}
+		})
+	}
+}
+
+func TestLoadValidatesEnabledHuinongSource(t *testing.T) {
+	clearIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+	t.Setenv("INGESTION_HUINONG_ENABLED", "true")
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "INGESTION_HUINONG_BASE_URL") {
+		t.Fatalf("Load() error = %v, want Base URL validation", err)
+	}
+
+	t.Setenv("INGESTION_HUINONG_BASE_URL", "http://huinong.example.test")
+	_, err = config.Load()
+	if err == nil || !strings.Contains(err.Error(), "INGESTION_HUINONG_DEVICE_ID") {
+		t.Fatalf("Load() error = %v, want Device ID validation", err)
+	}
+
+	t.Setenv("INGESTION_HUINONG_DEVICE_ID", "device-test")
+	_, err = config.Load()
+	if err == nil || !strings.Contains(err.Error(), "INGESTION_HUINONG_SECRET") {
+		t.Fatalf("Load() error = %v, want Secret validation", err)
+	}
+}
+
+func TestLoadRejectsInsecureProductionHuinongURL(t *testing.T) {
+	clearIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("INGESTION_HUINONG_ENABLED", "true")
+	t.Setenv("INGESTION_HUINONG_BASE_URL", "http://huinong.example.test")
+	t.Setenv("INGESTION_HUINONG_DEVICE_ID", "device-test")
+	t.Setenv("INGESTION_HUINONG_SECRET", "secret-test")
+
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "INGESTION_HUINONG_BASE_URL") {
+		t.Fatalf("Load() error = %v, want production HTTPS validation", err)
 	}
 }
 
