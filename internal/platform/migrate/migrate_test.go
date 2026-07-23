@@ -9,6 +9,7 @@ import (
 
 	"github.com/Y1le/agri-price-crawler/internal/platform/migrate"
 	platformpg "github.com/Y1le/agri-price-crawler/internal/platform/postgres"
+	"github.com/Y1le/agri-price-crawler/internal/platform/testdb"
 )
 
 func TestLatestVersionSortsGlobalVersionsAcrossSources(t *testing.T) {
@@ -66,13 +67,25 @@ func TestUpIsIdempotentAndCreatesJobLeaseIndex(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	testdb.LockSchema(t, ctx, url)
 	pool, err := platformpg.Open(ctx, url)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pool.Close()
 
-	if _, err := pool.Exec(ctx, "DROP TABLE IF EXISTS platform_outbox, platform_jobs, platform_schema_migrations"); err != nil {
+	if _, err := pool.Exec(ctx, `
+		DROP TABLE IF EXISTS
+			identity_account_merges,
+			identity_refresh_tokens,
+			identity_sessions,
+			identity_identities,
+			identity_users,
+			platform_outbox,
+			platform_jobs,
+			platform_schema_migrations
+		CASCADE
+	`); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrate.Up(ctx, pool); err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/Y1le/agri-price-crawler/internal/bootstrap"
 	"github.com/Y1le/agri-price-crawler/internal/platform/config"
 	platformpg "github.com/Y1le/agri-price-crawler/internal/platform/postgres"
+	"github.com/Y1le/agri-price-crawler/internal/platform/testdb"
 )
 
 func TestMigrationsCreateIdentitySchema(t *testing.T) {
@@ -19,6 +20,7 @@ func TestMigrationsCreateIdentitySchema(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	testdb.LockSchema(t, ctx, url)
 	pool, err := platformpg.Open(ctx, url)
 	if err != nil {
 		t.Fatal(err)

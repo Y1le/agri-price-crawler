@@ -7,6 +7,7 @@ import (
 
 	"github.com/Y1le/agri-price-crawler/internal/platform/migrate"
 	platformpg "github.com/Y1le/agri-price-crawler/internal/platform/postgres"
+	"github.com/Y1le/agri-price-crawler/internal/platform/testdb"
 )
 
 func TestRequiredSchemaVersionUsesMigrationCatalog(t *testing.T) {
@@ -26,6 +27,7 @@ func TestRequireSchemaVersionAcceptsLatestMigration(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	testdb.LockSchema(t, ctx, url)
 	pool, err := platformpg.Open(ctx, url)
 	if err != nil {
 		t.Fatal(err)
