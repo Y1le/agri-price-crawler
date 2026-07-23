@@ -41,8 +41,8 @@ paths:
       summary: Send an email login code
       description: |
         Sends a one-time login code without revealing whether the email already
-        belongs to an account. A successful request is always accepted
-        asynchronously.
+        belongs to an account. Returns `202` only after the configured sender
+        accepts successful delivery.
       security: []
       requestBody:
         required: true
@@ -87,8 +87,6 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
         '500':
@@ -172,8 +170,6 @@ paths:
           $ref: '#/components/responses/LogoutSucceeded'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
         '500':
@@ -256,8 +252,6 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
         '500':
@@ -445,6 +439,7 @@ components:
         - status
         - code
         - trace_id
+        - detail
       properties:
         type:
           type: string

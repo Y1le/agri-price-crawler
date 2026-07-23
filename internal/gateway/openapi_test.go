@@ -51,13 +51,13 @@ func TestOpenAPIIdentityContract(t *testing.T) {
 	}
 	requiredResponses := map[string][]string{
 		"/api/v1/auth/email/code":      {"202", "400", "429", "503"},
-		"/api/v1/auth/email/login":     {"200", "400", "403", "409", "429", "503"},
+		"/api/v1/auth/email/login":     {"200", "400", "403", "409", "503"},
 		"/api/v1/auth/wechat/login":    {"200", "400", "403", "409", "429", "503"},
 		"/api/v1/auth/refresh":         {"200", "400", "401", "403", "503"},
-		"/api/v1/auth/logout":          {"200", "401", "403", "503"},
+		"/api/v1/auth/logout":          {"200", "401", "503"},
 		"/api/v1/auth/logout-all":      {"200", "401", "403", "503"},
 		"/api/v1/auth/bind/email/code": {"202", "400", "401", "403", "429", "503"},
-		"/api/v1/auth/bind/email":      {"200", "400", "401", "403", "409", "429", "503"},
+		"/api/v1/auth/bind/email":      {"200", "400", "401", "403", "409", "503"},
 		"/api/v1/auth/bind/wechat":     {"200", "400", "401", "403", "409", "429", "503"},
 		"/api/v1/me":                   {"200", "401", "403", "503"},
 	}
@@ -67,6 +67,29 @@ func TestOpenAPIIdentityContract(t *testing.T) {
 		for _, status := range statuses {
 			mapValue(t, responses, status)
 		}
+	}
+	unreachableResponses := map[string][]string{
+		"/api/v1/auth/email/login": {"429"},
+		"/api/v1/auth/logout":      {"403"},
+		"/api/v1/auth/bind/email":  {"429"},
+	}
+	for path, statuses := range unreachableResponses {
+		operation := mapValue(t, mapValue(t, paths, path), expected[path])
+		responses := mapValue(t, operation, "responses")
+		for _, status := range statuses {
+			if _, ok := responses[status]; ok {
+				t.Fatalf("%s documents unreachable response %s", path, status)
+			}
+		}
+	}
+	emailCodeDescription := stringValue(t,
+		mapValue(t, mapValue(t, paths, "/api/v1/auth/email/code"), "post"),
+		"description",
+	)
+	if strings.Contains(strings.ToLower(emailCodeDescription), "asynchronous") ||
+		!strings.Contains(strings.ToLower(emailCodeDescription), "only after") ||
+		!strings.Contains(strings.ToLower(emailCodeDescription), "delivery") {
+		t.Fatal("email code description must document synchronous delivery before 202")
 	}
 
 	protected := []string{
@@ -123,6 +146,10 @@ func TestOpenAPIIdentityContract(t *testing.T) {
 
 	clientKind := mapValue(t, schemas, "ClientKind")
 	requireStringSet(t, clientKind["enum"], "web", "wechat_mini")
+	problem := mapValue(t, schemas, "Problem")
+	requireStringSet(t, problem["required"],
+		"type", "title", "status", "code", "trace_id", "detail",
+	)
 
 	emailCodeProperties := mapValue(t, mapValue(t, schemas, "EmailCodeRequest"), "properties")
 	if got := mapValue(t, emailCodeProperties, "email")["format"]; got != "email" {
