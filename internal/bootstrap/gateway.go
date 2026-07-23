@@ -14,8 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const requiredSchemaVersion int64 = 2
-
 // RunGateway assembles and runs the HTTP gateway until ctx is cancelled.
 func RunGateway(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	pool, err := openPostgres(ctx, cfg.Postgres.URL)
@@ -58,8 +56,12 @@ func requireSchemaVersion(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return fmt.Errorf("check PostgreSQL schema version: %w", err)
 	}
-	if version != requiredSchemaVersion {
-		return fmt.Errorf("PostgreSQL schema version is %d, want %d", version, requiredSchemaVersion)
+	requiredVersion, err := requiredSchemaVersion()
+	if err != nil {
+		return fmt.Errorf("determine required PostgreSQL schema version: %w", err)
+	}
+	if version != requiredVersion {
+		return fmt.Errorf("PostgreSQL schema version is %d, want %d", version, requiredVersion)
 	}
 	return nil
 }

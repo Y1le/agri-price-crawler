@@ -9,6 +9,16 @@ import (
 	platformpg "github.com/Y1le/agri-price-crawler/internal/platform/postgres"
 )
 
+func TestRequiredSchemaVersionUsesMigrationCatalog(t *testing.T) {
+	version, err := requiredSchemaVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 {
+		t.Fatalf("version = %d, want 2", version)
+	}
+}
+
 func TestRequireSchemaVersionAcceptsLatestMigration(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
@@ -21,7 +31,7 @@ func TestRequireSchemaVersionAcceptsLatestMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	if err := migrate.Up(ctx, pool); err != nil {
+	if err := migrate.Up(ctx, pool, migrationSources()...); err != nil {
 		t.Fatal(err)
 	}
 

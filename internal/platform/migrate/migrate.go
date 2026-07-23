@@ -3,10 +3,7 @@ package migrate
 
 import (
 	"context"
-	"embed"
 	"fmt"
-	"io/fs"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -15,18 +12,16 @@ import (
 
 const advisoryLockID int64 = 71422026
 
-//go:embed sql/*.up.sql
-var migrationFiles embed.FS
-
 type migration struct {
 	version int64
 	name    string
 	sql     string
 }
 
-// Up applies every embedded migration that has not previously been recorded.
-func Up(ctx context.Context, pool *pgxpool.Pool) (err error) {
-	migrations, err := loadMigrations()
+// Up applies every catalog migration that has not previously been recorded.
+// With no explicit sources, Up applies the shared Platform migrations.
+func Up(ctx context.Context, pool *pgxpool.Pool, sources ...Source) (err error) {
+	migrations, err := loadSources(defaultSources(sources))
 	if err != nil {
 		return err
 	}
@@ -82,37 +77,6 @@ func CurrentVersion(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 		return 0, fmt.Errorf("query current migration version: %w", err)
 	}
 	return version, nil
-}
-
-func loadMigrations() ([]migration, error) {
-	entries, err := fs.ReadDir(migrationFiles, "sql")
-	if err != nil {
-		return nil, fmt.Errorf("read embedded migrations: %w", err)
-	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Name() < entries[j].Name()
-	})
-
-	migrations := make([]migration, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		name := entry.Name()
-		version, err := migrationVersion(name)
-		if err != nil {
-			return nil, err
-		}
-		contents, err := migrationFiles.ReadFile("sql/" + name)
-		if err != nil {
-			return nil, fmt.Errorf("read migration %s: %w", name, err)
-		}
-		migrations = append(migrations, migration{version: version, name: name, sql: string(contents)})
-	}
-
-	return migrations, nil
 }
 
 func migrationVersion(name string) (int64, error) {

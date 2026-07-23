@@ -3,11 +3,42 @@ package migrate_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/Y1le/agri-price-crawler/internal/platform/migrate"
 	platformpg "github.com/Y1le/agri-price-crawler/internal/platform/postgres"
 )
+
+func TestLatestVersionSortsGlobalVersionsAcrossSources(t *testing.T) {
+	source := migrate.NewSource("test", fstest.MapFS{
+		"000002_second.up.sql": {Data: []byte("SELECT 2")},
+		"000001_first.up.sql":  {Data: []byte("SELECT 1")},
+	}, ".")
+
+	version, err := migrate.LatestVersion(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 {
+		t.Fatalf("version = %d, want 2", version)
+	}
+}
+
+func TestLatestVersionRejectsDuplicateGlobalVersion(t *testing.T) {
+	a := migrate.NewSource("a", fstest.MapFS{
+		"000001_a.up.sql": {Data: []byte("SELECT 1")},
+	}, ".")
+	b := migrate.NewSource("b", fstest.MapFS{
+		"000001_b.up.sql": {Data: []byte("SELECT 2")},
+	}, ".")
+
+	_, err := migrate.LatestVersion(a, b)
+	if err == nil || !strings.Contains(err.Error(), "duplicate migration version 1") {
+		t.Fatalf("error = %v, want duplicate version", err)
+	}
+}
 
 func TestUpIsIdempotentAndCreatesJobLeaseIndex(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
