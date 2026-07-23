@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path"
 	"sort"
+	"strings"
 )
 
 //go:embed sql/*.up.sql
@@ -50,6 +51,16 @@ func defaultSources(sources []Source) []Source {
 func loadSources(sources []Source) ([]migration, error) {
 	var migrations []migration
 	for _, source := range sources {
+		if strings.TrimSpace(source.name) == "" {
+			return nil, fmt.Errorf("migration source name is required")
+		}
+		if source.files == nil {
+			return nil, fmt.Errorf("migration source %q: filesystem is required", source.name)
+		}
+		if !fs.ValidPath(source.dir) {
+			return nil, fmt.Errorf("migration source %q: invalid directory %q", source.name, source.dir)
+		}
+
 		entries, err := fs.ReadDir(source.files, source.dir)
 		if err != nil {
 			return nil, fmt.Errorf("read migration source %q: %w", source.name, err)

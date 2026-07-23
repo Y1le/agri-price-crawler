@@ -12,12 +12,14 @@ import (
 )
 
 func TestLatestVersionSortsGlobalVersionsAcrossSources(t *testing.T) {
-	source := migrate.NewSource("test", fstest.MapFS{
+	high := migrate.NewSource("high", fstest.MapFS{
 		"000002_second.up.sql": {Data: []byte("SELECT 2")},
-		"000001_first.up.sql":  {Data: []byte("SELECT 1")},
+	}, ".")
+	low := migrate.NewSource("low", fstest.MapFS{
+		"000001_first.up.sql": {Data: []byte("SELECT 1")},
 	}, ".")
 
-	version, err := migrate.LatestVersion(source)
+	version, err := migrate.LatestVersion(high, low)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,6 +39,23 @@ func TestLatestVersionRejectsDuplicateGlobalVersion(t *testing.T) {
 	_, err := migrate.LatestVersion(a, b)
 	if err == nil || !strings.Contains(err.Error(), "duplicate migration version 1") {
 		t.Fatalf("error = %v, want duplicate version", err)
+	}
+}
+
+func TestLatestVersionRejectsInvalidSource(t *testing.T) {
+	tests := map[string]migrate.Source{
+		"zero value":   {},
+		"missing name": migrate.NewSource("", fstest.MapFS{}, "."),
+		"missing fs":   migrate.NewSource("test", nil, "."),
+		"invalid dir":  migrate.NewSource("test", fstest.MapFS{}, "../sql"),
+	}
+
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := migrate.LatestVersion(source); err == nil {
+				t.Fatal("error = nil, want invalid migration source")
+			}
+		})
 	}
 }
 
