@@ -468,6 +468,7 @@ type Tx interface {
 	SQL() platformpostgres.Tx
 	FindIdentity(context.Context, IdentityKind, string, string, bool) (ExternalIdentity, error)
 	FindUser(context.Context, uuid.UUID, bool) (User, error)
+	ListIdentities(context.Context, uuid.UUID) ([]ExternalIdentity, error)
 	InsertUser(context.Context, User) error
 	InsertIdentity(context.Context, ExternalIdentity) error
 	UpdateIdentityUnionID(context.Context, uuid.UUID, string) error
@@ -494,6 +495,10 @@ type EmailSender interface { SendCode(context.Context, string, string, time.Dura
 type WeChatExchanger interface { Exchange(context.Context, string) (WeChatIdentity, error) }
 type MergeParticipant interface { Merge(context.Context, platformpostgres.Tx, uuid.UUID, uuid.UUID) error }
 ```
+
+Quality-review contract addition: `ListIdentities` lets binding and merging
+construct the complete account summary before the transaction commits, avoiding
+a post-commit read that can fail after durable state has already changed.
 
 Add the shared transaction contract:
 
@@ -876,7 +881,7 @@ Expected: FAIL because binding methods do not exist.
 
 - [ ] **Step 4: Add deterministic atomic merge**
 
-If the identity is unowned, attach it to the current user and return `BindResult{Account: summary}`. If it belongs to the current user, return the same shape without creating a new session. Otherwise load the principal's active session to retain its `Client` value, lock both users in UUID order, then choose primary by `created_at` and UUID tie-break. Call merge participants in registration order with `tx.SQL()`, reassign identities, call `MarkUserMerged`, record the merge, revoke every old session for both users, and create one new session for the retained current client before commit. A successful merge returns the new credentials in `BindResult.Session`; non-merge binding leaves `Session` nil.
+If the identity is unowned, attach it to the current user and return `BindResult{Account: summary}`. If it belongs to the current user, return the same shape without creating a new session. Otherwise load the principal's active session to retain its `Client` value, lock both users in UUID order, then choose primary by `created_at` and UUID tie-break. Call merge participants in registration order with `tx.SQL()`, reassign identities, call `MarkUserMerged`, record the merge, revoke every old session for both users, and create one new session for the retained current client. Before the transaction callback returns, call `tx.ListIdentities` for the primary user and construct the complete `AccountSummary`; do not defer this to a post-commit `Repository.UserSummary` read that could fail after the merge is durable. A successful merge returns the new credentials in `BindResult.Session`; non-merge binding leaves `Session` nil.
 
 - [ ] **Step 5: Protect failure behavior**
 

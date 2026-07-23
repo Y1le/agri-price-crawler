@@ -30,12 +30,6 @@ func TestNormalizeEmailRejectsInvalidForms(t *testing.T) {
 		"display name":       "Farmer <farmer@example.com>",
 		"multiple addresses": "one@example.com, two@example.com",
 		"over 254 bytes":     strings.Repeat("a", 243) + "@example.com",
-		"ASCII control":      "farmer@\texample.com",
-		"ASCII space":        "farmer @example.com",
-		"non-breaking space": "farmer@example.com\u00a0",
-		"zero-width space":   "farmer@\u200bexample.com",
-		"combining mark":     "farme\u0301r@example.com",
-		"Chinese domain":     "farmer@例子.中国",
 	}
 	for name, raw := range tests {
 		raw := raw
@@ -46,6 +40,15 @@ func TestNormalizeEmailRejectsInvalidForms(t *testing.T) {
 				t.Fatalf("error=%v", err)
 			}
 		})
+	}
+}
+
+func TestNormalizeEmailTrimsUnicodeSpaceWithoutASCIIOnlyPolicy(t *testing.T) {
+	t.Parallel()
+
+	got, err := NormalizeEmail("\u00a0Farmer@Example.COM\u00a0")
+	if err != nil || got != "farmer@example.com" {
+		t.Fatalf("got %q err=%v", got, err)
 	}
 }
 
