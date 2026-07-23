@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/Y1le/agri-price-crawler/internal/platform/httpx"
@@ -76,4 +77,34 @@ func TestWriteProblemOmitsEmptySafeDetail(t *testing.T) {
 	})
 
 	require.NotContains(t, string(writer.body), `"detail"`)
+}
+
+func TestWriteProblemSanitizesInvalidHTTPStatusWithoutMutatingCaller(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []int{0, 99, 1000} {
+		status := status
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+
+			problem := httpx.Problem{
+				Type:    "about:blank",
+				Title:   "无效状态",
+				Status:  status,
+				Code:    "invalid_status",
+				TraceID: "request-invalid-status",
+			}
+			response := httptest.NewRecorder()
+
+			require.NotPanics(t, func() {
+				httpx.WriteProblem(response, problem)
+			})
+
+			require.Equal(t, http.StatusInternalServerError, response.Code)
+			var got httpx.Problem
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &got))
+			require.Equal(t, http.StatusInternalServerError, got.Status)
+			require.Equal(t, status, problem.Status, "WriteProblem must not mutate its caller's value")
+		})
+	}
 }

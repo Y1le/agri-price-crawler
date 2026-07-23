@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Y1le/agri-price-crawler/internal/platform/httpx"
@@ -14,7 +15,7 @@ func TestCORSAllowsOnlyCanonicalExactConfiguredOrigins(t *testing.T) {
 	t.Parallel()
 
 	handler, err := httpx.CORS([]string{
-		"HTTPS://Example.COM:443/",
+		"HTTPS://Example.COM:443",
 		"http://localhost:3000",
 	}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -70,6 +71,16 @@ func TestCORSRejectsUnsafeConfiguration(t *testing.T) {
 		"ftp://example.com",
 		"https://example.com:bad",
 		"https://example.com,https://evil.test",
+		"https://example.com:",
+		"https://[2001:db8::1]:",
+		"https://[example.com]",
+		"https://[192.0.2.1]",
+		"https://example.com.",
+		"https://example..com",
+		"https://-example.com",
+		"https://example-.com",
+		"https://exa_mple.com",
+		"https://例子.example",
 		"",
 	}
 	for _, origin := range invalidOrigins {
@@ -77,6 +88,67 @@ func TestCORSRejectsUnsafeConfiguration(t *testing.T) {
 		t.Run(origin, func(t *testing.T) {
 			t.Parallel()
 			_, err := httpx.CORS([]string{origin}, http.NotFoundHandler())
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestNormalizeOriginValidatesRawAuthorityBeforeCanonicalizing(t *testing.T) {
+	t.Parallel()
+
+	valid := map[string]string{
+		"HTTPS://Example.COM:443":            "https://example.com",
+		"http://Example.COM:80":              "http://example.com",
+		"https://Example.COM:0443":           "https://example.com",
+		"https://xn--fsqu00a.example":        "https://xn--fsqu00a.example",
+		"https://192.0.2.1:8443":             "https://192.0.2.1:8443",
+		"https://[2001:0db8:0:0::1]:443":     "https://[2001:db8::1]",
+		"https://[2001:db8::1]:8443":         "https://[2001:db8::1]:8443",
+		"http://localhost:3000":              "http://localhost:3000",
+		"https://one-two.three-four.example": "https://one-two.three-four.example",
+	}
+	for raw, want := range valid {
+		raw, want := raw, want
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+			got, err := httpx.NormalizeOrigin(raw)
+			require.NoError(t, err)
+			require.Equal(t, want, got)
+		})
+	}
+
+	label64 := strings.Repeat("a", 64)
+	host254 := strings.Repeat("a.", 126) + "aa"
+	invalid := []string{
+		"https://example.com/",
+		"https://example.com:",
+		"https://[2001:db8::1]:",
+		"https://[example.com]",
+		"https://[192.0.2.1]",
+		"https://2001:db8::1",
+		"https://[fe80::1%25en0]",
+		"https://example.com.",
+		"https://example..com",
+		"https://.example.com",
+		"https://-example.com",
+		"https://example-.com",
+		"https://exa_mple.com",
+		"https://" + label64 + ".example",
+		"https://" + host254,
+		"https://例子.example",
+		"https://bücher.example",
+		"https://example.com:+443",
+		"https://example.com:-1",
+		"https://example.com:65536",
+		"https://example.com:0",
+		"https://192.168.001.1",
+		"https://999.1.1.1",
+	}
+	for _, raw := range invalid {
+		raw := raw
+		t.Run(raw, func(t *testing.T) {
+			t.Parallel()
+			_, err := httpx.NormalizeOrigin(raw)
 			require.Error(t, err)
 		})
 	}
@@ -147,6 +219,56 @@ func TestCORSRejectsDisallowedPreflightMethodOrHeaders(t *testing.T) {
 
 		require.Equal(t, http.StatusForbidden, response.Code)
 	}
+}
+
+func TestCORSEveryPreflightResponseHasCompleteDeduplicatedVary(t *testing.T) {
+	t.Parallel()
+
+	handler, err := httpx.CORS([]string{"https://example.com"}, http.NotFoundHandler())
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		origin string
+		method string
+		status int
+	}{
+		{name: "allowed", origin: "https://example.com", method: http.MethodPost, status: http.StatusNoContent},
+		{name: "foreign origin rejected", origin: "https://evil.test", method: http.MethodPost, status: http.StatusForbidden},
+		{name: "method rejected", origin: "https://example.com", method: http.MethodDelete, status: http.StatusForbidden},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := httptest.NewRequest(http.MethodOptions, "/", nil)
+			request.Header.Set("Origin", test.origin)
+			request.Header.Set("Access-Control-Request-Method", test.method)
+			response := httptest.NewRecorder()
+			response.Header().Add("Vary", "Accept-Encoding, origin, ORIGIN")
+			response.Header().Add("Vary", "ACCESS-CONTROL-REQUEST-METHOD")
+			response.Header().Add("Vary", "access-control-request-headers, Accept-Encoding")
+
+			handler.ServeHTTP(response, request)
+
+			require.Equal(t, test.status, response.Code)
+			members := varyMembers(response.Header().Values("Vary"))
+			require.Equal(t, 1, members["origin"])
+			require.Equal(t, 1, members["access-control-request-method"])
+			require.Equal(t, 1, members["access-control-request-headers"])
+			require.Equal(t, 1, members["accept-encoding"])
+		})
+	}
+}
+
+func varyMembers(lines []string) map[string]int {
+	members := make(map[string]int)
+	for _, line := range lines {
+		for _, member := range strings.Split(line, ",") {
+			members[strings.ToLower(strings.TrimSpace(member))]++
+		}
+	}
+	return members
 }
 
 func TestRequireAllowedOriginProtectsCookieAuthenticatedUnsafeMethods(t *testing.T) {

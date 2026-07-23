@@ -356,6 +356,46 @@ func TestIdentityGatewayValidationAllowsHTTPInDevelopment(t *testing.T) {
 	}
 }
 
+func TestIdentityGatewayValidationUsesStrictOriginCanonicalization(t *testing.T) {
+	setValidIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, origin := range []string{
+		"https://example.com:",
+		"https://[2001:db8::1]:",
+		"https://[example.com]",
+		"https://[192.0.2.1]",
+		"https://example.com.",
+		"https://example..com",
+		"https://-example.com",
+		"https://example-.com",
+		"https://exa_mple.com",
+		"https://例子.example",
+	} {
+		candidate := got
+		candidate.Identity.Web.AllowedOrigins = []string{origin}
+		if err := candidate.ValidateGateway(); err == nil || !strings.Contains(err.Error(), "IDENTITY_WEB_ALLOWED_ORIGINS") {
+			t.Fatalf("ValidateGateway() origin %q error = %v, want strict origin error", origin, err)
+		}
+	}
+
+	for _, origin := range []string{
+		"HTTPS://Example.COM:443",
+		"https://xn--fsqu00a.example",
+	} {
+		candidate := got
+		candidate.Identity.Web.AllowedOrigins = []string{origin}
+		if err := candidate.ValidateGateway(); err != nil {
+			t.Fatalf("ValidateGateway() origin %q error = %v", origin, err)
+		}
+	}
+}
+
 func TestIdentityGatewayValidationSMTP(t *testing.T) {
 	tests := []struct {
 		name    string

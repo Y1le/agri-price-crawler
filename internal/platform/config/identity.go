@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/Y1le/agri-price-crawler/internal/platform/httpx"
 )
 
 const (
@@ -411,18 +413,12 @@ func validateHTTPBaseURL(name, value string, requireHTTPS bool) error {
 }
 
 func validateOrigin(origin string, requireHTTPS bool) error {
-	if origin == "*" {
-		return fmt.Errorf("wildcard origin is not allowed")
+	normalized, err := httpx.NormalizeOrigin(origin)
+	if err != nil {
+		return fmt.Errorf("value must be an exact HTTP(S) origin: %w", err)
 	}
-	parsed, err := url.Parse(origin)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return fmt.Errorf("value must be an absolute HTTP(S) origin")
-	}
-	if requireHTTPS && parsed.Scheme != "https" {
+	if requireHTTPS && !strings.HasPrefix(normalized, "https://") {
 		return fmt.Errorf("origin must use https in production")
-	}
-	if parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return fmt.Errorf("value must be an exact origin")
 	}
 	return nil
 }

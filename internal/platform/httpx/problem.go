@@ -20,6 +20,9 @@ type Problem struct {
 
 // WriteProblem writes exactly one RFC 9457-style JSON problem document.
 func WriteProblem(w http.ResponseWriter, problem Problem) {
+	if problem.Status < 100 || problem.Status > 999 {
+		problem.Status = http.StatusInternalServerError
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(problem.Status)
 	_ = json.NewEncoder(w).Encode(problem)
