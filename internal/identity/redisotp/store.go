@@ -4,6 +4,7 @@ package redisotp
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"reflect"
@@ -15,6 +16,14 @@ import (
 )
 
 var issueScript = redis.NewScript(`
+local challenge_type = redis.call("TYPE", KEYS[1])
+if type(challenge_type) == "table" then
+	challenge_type = challenge_type["ok"]
+end
+if challenge_type ~= "none" and challenge_type ~= "hash" then
+	return "corrupt"
+end
+
 local email_count = tonumber(redis.call("GET", KEYS[3]) or "0")
 local ip_count = tonumber(redis.call("GET", KEYS[4]) or "0")
 local max_email = tonumber(ARGV[8])
@@ -45,7 +54,7 @@ redis.call(
 	"owner", ARGV[4]
 )
 redis.call("PEXPIRE", KEYS[1], ARGV[5])
-redis.call("SET", KEYS[2], "1", "PX", ARGV[6])
+redis.call("SET", KEYS[2], ARGV[1], "PX", ARGV[6])
 return "ok"
 `)
 
@@ -82,9 +91,31 @@ return "invalid"
 `)
 
 var deleteIfMatchScript = redis.NewScript(`
+local challenge_type = redis.call("TYPE", KEYS[1])
+if type(challenge_type) == "table" then
+	challenge_type = challenge_type["ok"]
+end
+if challenge_type == "none" then
+	return "unchanged"
+end
+if challenge_type ~= "hash" then
+	return "corrupt"
+end
+
+local cooldown_type = redis.call("TYPE", KEYS[2])
+if type(cooldown_type) == "table" then
+	cooldown_type = cooldown_type["ok"]
+end
+if cooldown_type ~= "none" and cooldown_type ~= "string" then
+	return "corrupt"
+end
+
 local digest = redis.call("HGET", KEYS[1], "digest")
 if digest and digest == ARGV[1] then
-	redis.call("DEL", KEYS[1], KEYS[2])
+	redis.call("DEL", KEYS[1])
+	if cooldown_type == "string" and redis.call("GET", KEYS[2]) == ARGV[1] then
+		redis.call("DEL", KEYS[2])
+	end
 	return "deleted"
 end
 return "unchanged"
@@ -118,9 +149,15 @@ func New(client redis.UniversalClient, prefix string) identity.OTPStore {
 	if isNilClient(client) {
 		client = nil
 	}
+	normalizedPrefix := strings.TrimRight(prefix, ":")
+	prefixDigest := sha256.Sum256([]byte(normalizedPrefix))
+	namespace := fmt.Sprintf("{redisotp-%x}", prefixDigest[:8])
+	if normalizedPrefix != "" {
+		namespace += ":" + normalizedPrefix
+	}
 	return &store{
 		client: client,
-		prefix: strings.TrimRight(prefix, ":"),
+		prefix: namespace,
 	}
 }
 
@@ -133,7 +170,7 @@ func (s *store) Issue(ctx context.Context, challenge identity.OTPChallenge) erro
 		issueScript,
 		[]string{
 			s.challengeKey(challenge.EmailKey, challenge.Purpose),
-			s.cooldownKey(challenge.EmailKey, challenge.Purpose),
+			s.cooldownKey(challenge.EmailKey),
 			s.emailRateKey(challenge.EmailKey),
 			s.ipRateKey(challenge.IP),
 		},
@@ -141,14 +178,14 @@ func (s *store) Issue(ctx context.Context, challenge identity.OTPChallenge) erro
 		challenge.Attempts,
 		challenge.Purpose,
 		challenge.Owner,
-		challenge.TTL.Milliseconds(),
-		challenge.Cooldown.Milliseconds(),
-		challenge.Window.Milliseconds(),
+		durationMillisecondsCeil(challenge.TTL),
+		durationMillisecondsCeil(challenge.Cooldown),
+		durationMillisecondsCeil(challenge.Window),
 		challenge.MaxEmail,
 		challenge.MaxIP,
 	)
 	if err != nil {
-		return stateUnavailable("issue verification challenge")
+		return mapStateError("issue verification challenge", err)
 	}
 
 	switch result {
@@ -174,7 +211,7 @@ func (s *store) Verify(ctx context.Context, attempt identity.OTPAttempt) error {
 		attempt.Owner,
 	)
 	if err != nil {
-		return stateUnavailable("verify challenge")
+		return mapStateError("verify challenge", err)
 	}
 
 	switch result {
@@ -204,12 +241,12 @@ func (s *store) DeleteIfMatch(ctx context.Context, challenge identity.OTPChallen
 		deleteIfMatchScript,
 		[]string{
 			s.challengeKey(challenge.EmailKey, challenge.Purpose),
-			s.cooldownKey(challenge.EmailKey, challenge.Purpose),
+			s.cooldownKey(challenge.EmailKey),
 		},
 		challenge.Digest,
 	)
 	if err != nil {
-		return stateUnavailable("delete verification challenge")
+		return mapStateError("delete verification challenge", err)
 	}
 	switch result {
 	case "deleted", "unchanged":
@@ -234,10 +271,10 @@ func (s *store) Allow(ctx context.Context, limit identity.RateLimit) error {
 		allowScript,
 		[]string{s.genericRateKey(limit.Key)},
 		limit.Max,
-		limit.Window.Milliseconds(),
+		durationMillisecondsCeil(limit.Window),
 	)
 	if err != nil {
-		return stateUnavailable("apply rate limit")
+		return mapStateError("apply rate limit", err)
 	}
 	switch result {
 	case "ok":
@@ -255,6 +292,9 @@ func (s *store) run(
 	keys []string,
 	args ...any,
 ) (string, error) {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return "", context.Canceled
+	}
 	if s == nil || s.client == nil {
 		return "", errors.New("Redis client is unavailable")
 	}
@@ -265,8 +305,8 @@ func (s *store) challengeKey(emailKey, purpose string) string {
 	return s.key("challenge", purpose, emailKey)
 }
 
-func (s *store) cooldownKey(emailKey, purpose string) string {
-	return s.key("cooldown", purpose, emailKey)
+func (s *store) cooldownKey(emailKey string) string {
+	return s.key("cooldown", emailKey)
 }
 
 func (s *store) emailRateKey(emailKey string) string {
@@ -334,6 +374,21 @@ func invalidRequest(message string) error {
 
 func stateUnavailable(operation string) error {
 	return fmt.Errorf("%s: %w", operation, identity.ErrStateUnavailable)
+}
+
+func mapStateError(operation string, err error) error {
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%s: %w", operation, context.Canceled)
+	}
+	return stateUnavailable(operation)
+}
+
+func durationMillisecondsCeil(duration time.Duration) int64 {
+	milliseconds := int64(duration / time.Millisecond)
+	if duration%time.Millisecond != 0 {
+		milliseconds++
+	}
+	return milliseconds
 }
 
 func isNilClient(client redis.UniversalClient) bool {
