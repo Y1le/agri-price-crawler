@@ -47,7 +47,18 @@ func TestRunMigrateAppliesLatestSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, "DROP TABLE IF EXISTS platform_outbox, platform_jobs, platform_schema_migrations"); err != nil {
+	if _, err := pool.Exec(ctx, `
+		DROP TABLE IF EXISTS
+			identity_account_merges,
+			identity_refresh_tokens,
+			identity_sessions,
+			identity_identities,
+			identity_users,
+			platform_outbox,
+			platform_jobs,
+			platform_schema_migrations
+		CASCADE
+	`); err != nil {
 		pool.Close()
 		t.Fatal(err)
 	}
@@ -66,7 +77,7 @@ func TestRunMigrateAppliesLatestSchemaVersion(t *testing.T) {
 	defer pool.Close()
 
 	version, err := migrate.CurrentVersion(ctx, pool)
-	if err != nil || version != 2 {
+	if err != nil || version != 3 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 }

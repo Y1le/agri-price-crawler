@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	identitypostgres "github.com/Y1le/agri-price-crawler/internal/identity/postgres"
 	"github.com/Y1le/agri-price-crawler/internal/platform/config"
 	"github.com/Y1le/agri-price-crawler/internal/platform/migrate"
 )
@@ -24,7 +25,10 @@ func RunMigrate(ctx context.Context, cfg config.Config, _ *slog.Logger) error {
 }
 
 func migrationSources() []migrate.Source {
-	return []migrate.Source{migrate.PlatformSource()}
+	return []migrate.Source{
+		migrate.PlatformSource(),
+		identitypostgres.Migrations(),
+	}
 }
 
 func requiredSchemaVersion() (int64, error) {
