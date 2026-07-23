@@ -1,17 +1,13 @@
 package identity
 
 import (
-	"context"
 	cryptorand "crypto/rand"
-	"errors"
 	"fmt"
 	"io"
 	"reflect"
 	"strings"
 	"time"
 )
-
-var errUseCaseNotImplemented = errors.New("identity: use case not implemented")
 
 // Policy contains Identity workflow limits and lifetimes.
 type Policy struct {
@@ -29,12 +25,14 @@ type Policy struct {
 // Dependencies contains every adapter required by Identity application use
 // cases. Clock and Random default to secure production implementations.
 type Dependencies struct {
-	Repository        Repository
-	OTPStore          OTPStore
-	EmailSender       EmailSender
-	WeChatExchanger   WeChatExchanger
-	TokenManager      AccessTokenIssuer
-	Clock             Clock
+	Repository      Repository
+	OTPStore        OTPStore
+	EmailSender     EmailSender
+	WeChatExchanger WeChatExchanger
+	TokenManager    AccessTokenIssuer
+	Clock           Clock
+	// Random must be safe for concurrent use when a custom implementation is
+	// injected. It defaults to crypto/rand.Reader.
 	Random            io.Reader
 	MergeParticipants []MergeParticipant
 }
@@ -79,6 +77,9 @@ func NewService(dependencies Dependencies, policy Policy) (*Service, error) {
 	if len(missing) != 0 {
 		return nil, fmt.Errorf("identity: missing mandatory dependencies: %s", strings.Join(missing, ", "))
 	}
+	if err := validatePolicy(policy); err != nil {
+		return nil, err
+	}
 
 	clock := dependencies.Clock
 	if isNilDependency(clock) {
@@ -88,6 +89,7 @@ func NewService(dependencies Dependencies, policy Policy) (*Service, error) {
 	if isNilDependency(random) {
 		random = cryptorand.Reader
 	}
+	policy.OTPPepper = append([]byte(nil), policy.OTPPepper...)
 
 	return &Service{
 		repository:        dependencies.Repository,
@@ -100,6 +102,33 @@ func NewService(dependencies Dependencies, policy Policy) (*Service, error) {
 		mergeParticipants: append([]MergeParticipant(nil), dependencies.MergeParticipants...),
 		policy:            policy,
 	}, nil
+}
+
+func validatePolicy(policy Policy) error {
+	switch {
+	case len(policy.OTPPepper) < 32:
+		return fmt.Errorf("%w: Policy.OTPPepper must contain at least 32 bytes", ErrInvalidRequest)
+	case policy.OTPTTL <= 0:
+		return fmt.Errorf("%w: Policy.OTPTTL must be positive", ErrInvalidRequest)
+	case policy.OTPAttempts <= 0:
+		return fmt.Errorf("%w: Policy.OTPAttempts must be positive", ErrInvalidRequest)
+	case policy.OTPCooldown <= 0:
+		return fmt.Errorf("%w: Policy.OTPCooldown must be positive", ErrInvalidRequest)
+	case policy.OTPEmailPerHour <= 0:
+		return fmt.Errorf("%w: Policy.OTPEmailPerHour must be positive", ErrInvalidRequest)
+	case policy.OTPIPPerHour <= 0:
+		return fmt.Errorf("%w: Policy.OTPIPPerHour must be positive", ErrInvalidRequest)
+	case policy.WeChatIPPerHour <= 0:
+		return fmt.Errorf("%w: Policy.WeChatIPPerHour must be positive", ErrInvalidRequest)
+	case policy.RefreshTTL <= 0:
+		return fmt.Errorf("%w: Policy.RefreshTTL must be positive", ErrInvalidRequest)
+	case policy.ReuseGrace < 0:
+		return fmt.Errorf("%w: Policy.ReuseGrace must not be negative", ErrInvalidRequest)
+	case policy.ReuseGrace >= policy.RefreshTTL:
+		return fmt.Errorf("%w: Policy.ReuseGrace must be shorter than Policy.RefreshTTL", ErrInvalidRequest)
+	default:
+		return nil
+	}
 }
 
 func isNilDependency(dependency any) bool {
@@ -118,43 +147,3 @@ func isNilDependency(dependency any) bool {
 type utcClock struct{}
 
 func (utcClock) Now() time.Time { return time.Now().UTC() }
-
-func (s *Service) RequestEmailLoginCode(context.Context, string, string) error {
-	return errUseCaseNotImplemented
-}
-
-func (s *Service) LoginEmail(context.Context, string, string, ClientKind) (LoginResult, error) {
-	return LoginResult{}, errUseCaseNotImplemented
-}
-
-func (s *Service) LoginWeChat(context.Context, string, string, ClientKind) (LoginResult, error) {
-	return LoginResult{}, errUseCaseNotImplemented
-}
-
-func (s *Service) Refresh(context.Context, string, ClientKind) (LoginResult, error) {
-	return LoginResult{}, errUseCaseNotImplemented
-}
-
-func (s *Service) Logout(context.Context, Principal) error {
-	return errUseCaseNotImplemented
-}
-
-func (s *Service) LogoutAll(context.Context, Principal) error {
-	return errUseCaseNotImplemented
-}
-
-func (s *Service) RequestBindEmailCode(context.Context, Principal, string, string) error {
-	return errUseCaseNotImplemented
-}
-
-func (s *Service) BindEmail(context.Context, Principal, string, string) (BindResult, error) {
-	return BindResult{}, errUseCaseNotImplemented
-}
-
-func (s *Service) BindWeChat(context.Context, Principal, string, string) (BindResult, error) {
-	return BindResult{}, errUseCaseNotImplemented
-}
-
-func (s *Service) Me(context.Context, Principal) (AccountSummary, error) {
-	return AccountSummary{}, errUseCaseNotImplemented
-}

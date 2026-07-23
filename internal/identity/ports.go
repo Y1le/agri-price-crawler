@@ -19,6 +19,7 @@ type Tx interface {
 	SQL() platformpostgres.Tx
 	FindIdentity(context.Context, IdentityKind, string, string, bool) (ExternalIdentity, error)
 	FindUser(context.Context, uuid.UUID, bool) (User, error)
+	ListIdentities(context.Context, uuid.UUID) ([]ExternalIdentity, error)
 	InsertUser(context.Context, User) error
 	InsertIdentity(context.Context, ExternalIdentity) error
 	UpdateIdentityUnionID(context.Context, uuid.UUID, string) error
@@ -68,4 +69,19 @@ type AccessTokenIssuer interface {
 // Clock makes time-dependent use cases deterministic in tests.
 type Clock interface {
 	Now() time.Time
+}
+
+// Application is the complete public Identity use-case surface. Service gains
+// these methods incrementally as their workflows are implemented.
+type Application interface {
+	RequestEmailLoginCode(context.Context, string, string) error
+	LoginEmail(context.Context, string, string, ClientKind) (LoginResult, error)
+	LoginWeChat(context.Context, string, string, ClientKind) (LoginResult, error)
+	Refresh(context.Context, string, ClientKind) (LoginResult, error)
+	Logout(context.Context, Principal) error
+	LogoutAll(context.Context, Principal) error
+	RequestBindEmailCode(context.Context, Principal, string, string) error
+	BindEmail(context.Context, Principal, string, string) (BindResult, error)
+	BindWeChat(context.Context, Principal, string, string) (BindResult, error)
+	Me(context.Context, Principal) (AccountSummary, error)
 }

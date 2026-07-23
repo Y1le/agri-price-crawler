@@ -169,9 +169,18 @@ type RateLimit struct {
 
 // NormalizeEmail parses and canonicalizes a single bare email address.
 func NormalizeEmail(raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
+	for _, character := range []byte(raw) {
+		if character > 0x7f || character < 0x20 || character == 0x7f {
+			return "", fmt.Errorf("%w: email must contain printable ASCII characters", ErrInvalidRequest)
+		}
+	}
+
+	trimmed := strings.Trim(raw, " ")
 	if trimmed == "" {
 		return "", fmt.Errorf("%w: email is required", ErrInvalidRequest)
+	}
+	if strings.Contains(trimmed, " ") {
+		return "", fmt.Errorf("%w: email contains whitespace", ErrInvalidRequest)
 	}
 
 	address, err := mail.ParseAddress(trimmed)
