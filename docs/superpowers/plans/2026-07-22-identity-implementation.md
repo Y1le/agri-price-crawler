@@ -365,7 +365,7 @@ Use defaults: key ID `identity-v1`, issuer `agri-price-crawler`, audience `agri-
 
 - [ ] **Step 4: Enforce environment-sensitive validation**
 
-`Load` parses nonempty base64 values and durations but leaves absent Gateway-only credentials empty so Worker and Migrate do not need them. `ValidateGateway` requires exactly 32 seed bytes, at least 32 Pepper bytes, and nonempty WeChat AppID/AppSecret in every environment; no environment may silently generate keys. Permit `IDENTITY_EMAIL_DRIVER=memory` only outside production; require SMTP host, port, from, username and password for `smtp`; accept TLS modes `implicit`, `starttls`, and development-only `none`; reject `app` as a currently enabled client; require production Cookie Secure, the `__Secure-` name prefix and a nonempty exact origin allowlist. Call `ValidateGateway` before constructing Gateway dependencies, not from Worker or Migrate.
+`Load` parses nonempty base64 values and durations but leaves absent Gateway-only credentials empty so Worker and Migrate do not need them. `ValidateGateway` requires exactly 32 seed bytes, at least 32 Pepper bytes, and nonempty WeChat AppID/AppSecret in every environment; no environment may silently generate keys. Permit `IDENTITY_EMAIL_DRIVER=memory` only outside production. Require SMTP host, port and from for `smtp`; `implicit` and `starttls` require username and password, while development-only `none` accepts Docker mail-catcher hostnames with empty credentials and means explicitly unauthenticated SMTP. Production rejects `none`. Reject `app` as a currently enabled client; require production Cookie Secure, the `__Secure-` name prefix and a nonempty exact origin allowlist. Call `ValidateGateway` before constructing Gateway dependencies, not from Worker or Migrate.
 
 - [ ] **Step 5: Run all config tests**
 
@@ -704,7 +704,7 @@ git commit -m "feat(identity): store OTP challenges atomically in Redis"
 
 - [ ] **Step 1: Write tests with an injected SMTP client**
 
-Assert envelope sender, one recipient, UTF-8 subject, plain-text body containing the code and expiry minutes, CRLF header safety, timeout propagation, and that error strings do not contain the recipient or code. Test the memory sender through `Codes(email) []string` without logging.
+Assert envelope sender, one recipient, UTF-8 subject, plain-text body containing the code and expiry minutes, CRLF header safety, timeout propagation, and that error strings do not contain the recipient or code. Assert `implicit` and `starttls` authenticate, while development `none` accepts a Docker mail-catcher hostname with empty credentials and never calls `Auth`. Test the memory sender through `Codes(email) []string` without logging.
 
 - [ ] **Step 2: Run tests and observe the missing adapter**
 
@@ -714,7 +714,7 @@ Expected: FAIL because the package does not exist.
 
 - [ ] **Step 3: Build a timeout-bounded standard-library SMTP client**
 
-Use `net.Dialer{Timeout: cfg.Timeout}` and set a connection deadline for the complete exchange. Support explicit TLS for port 465 and STARTTLS for configured non-implicit TLS. Call `smtp.NewClient`, `Hello`, `StartTLS`, `Auth`, `Mail`, `Rcpt`, `Data`, `Quit` in order. Reject `\r` or `\n` in configured From, recipient and subject before dialing.
+Use `net.Dialer{Timeout: cfg.Timeout}` and set a connection deadline for the complete exchange. Support implicit TLS for port 465 and STARTTLS when configured. For `implicit` and `starttls`, call `smtp.NewClient`, `Hello`, optional `StartTLS`, `Auth`, `Mail`, `Rcpt`, `Data`, `Quit` in order. Development-only `none` uses `Hello`, `Mail`, `Rcpt`, `Data`, `Quit` and must never construct or send authentication credentials. Reject `\r` or `\n` in configured From, recipient and subject before dialing.
 
 - [ ] **Step 4: Use fixed safe message copy**
 

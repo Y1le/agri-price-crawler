@@ -170,10 +170,17 @@ func TestSenderImplicitTLSDoesNotRequestSTARTTLS(t *testing.T) {
 	if err := sender.SendCode(context.Background(), testRecipient, testCode, time.Minute); err != nil {
 		t.Fatalf("send code: %v", err)
 	}
+	authenticated := false
 	for _, event := range client.Events() {
 		if strings.HasPrefix(event, "starttls:") {
 			t.Fatalf("implicit TLS unexpectedly requested STARTTLS: %#v", client.Events())
 		}
+		if event == "auth" {
+			authenticated = true
+		}
+	}
+	if !authenticated {
+		t.Fatalf("implicit TLS did not authenticate: %#v", client.Events())
 	}
 }
 
@@ -502,23 +509,64 @@ func TestNewRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
-func TestNewAllowsPlaintextSMTPOnlyOnExactLoopbackHosts(t *testing.T) {
+func TestSenderAllowsUnauthenticatedDevelopmentMailCatcher(t *testing.T) {
 	t.Parallel()
 
-	for _, host := range []string{"localhost", "127.0.0.1", "::1"} {
-		cfg := testConfig()
-		cfg.Host = host
-		cfg.TLSMode = "none"
-		if _, err := New(cfg); err != nil {
-			t.Fatalf("New rejected loopback host %q: %v", host, err)
-		}
+	for _, credentials := range []bool{false, true} {
+		credentials := credentials
+		t.Run(map[bool]string{false: "empty credentials", true: "configured credentials"}[credentials], func(t *testing.T) {
+			cfg := testConfig()
+			cfg.Host = "mailpit"
+			cfg.TLSMode = "none"
+			if !credentials {
+				cfg.Username = ""
+				cfg.Password = ""
+			}
+			client := newFakeClient()
+			sender, err := newSender(cfg, func(context.Context, config.SMTP) (smtpClient, error) {
+				return client, nil
+			})
+			if err != nil {
+				t.Fatalf("New rejected development mail catcher: %v", err)
+			}
+			if err := sender.SendCode(context.Background(), testRecipient, testCode, time.Minute); err != nil {
+				t.Fatalf("send code: %v", err)
+			}
+			for _, event := range client.Events() {
+				if event == "auth" || strings.HasPrefix(event, "starttls:") {
+					t.Fatalf("development none mode sent credentials or negotiated TLS: %#v", client.Events())
+				}
+			}
+			wantEvents := []string{
+				"hello:localhost",
+				"mail:sender@example.com",
+				"rcpt:" + testRecipient,
+				"data",
+				"data-close",
+				"quit",
+			}
+			if got := client.Events(); !equalStrings(got, wantEvents) {
+				t.Fatalf("protocol events = %#v, want %#v", got, wantEvents)
+			}
+		})
 	}
-	for _, host := range []string{"smtp.example.com", "localhost.example.com", "127.0.0.2"} {
-		cfg := testConfig()
-		cfg.Host = host
-		cfg.TLSMode = "none"
-		if _, err := New(cfg); err == nil {
-			t.Fatalf("New accepted remote plaintext host %q", host)
+}
+
+func TestNewTLSModesRequireCredentials(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"implicit", "starttls"} {
+		for _, missing := range []string{"username", "password"} {
+			cfg := testConfig()
+			cfg.TLSMode = mode
+			if missing == "username" {
+				cfg.Username = ""
+			} else {
+				cfg.Password = ""
+			}
+			if _, err := New(cfg); err == nil {
+				t.Fatalf("New accepted %s without %s", mode, missing)
+			}
 		}
 	}
 }

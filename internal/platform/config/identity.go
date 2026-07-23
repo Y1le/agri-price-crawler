@@ -374,38 +374,26 @@ func validateSMTP(smtp SMTP, environment string) error {
 	if smtp.Port < 1 || smtp.Port > 65535 {
 		return fmt.Errorf("IDENTITY_SMTP_PORT must be between 1 and 65535")
 	}
-	if smtp.Username == "" {
-		return fmt.Errorf("IDENTITY_SMTP_USERNAME is required for smtp")
-	}
-	if smtp.Password == "" {
-		return fmt.Errorf("IDENTITY_SMTP_PASSWORD is required for smtp")
-	}
 	from, err := mail.ParseAddress(smtp.From)
 	if err != nil || from.Name != "" || from.Address != smtp.From {
 		return fmt.Errorf("IDENTITY_SMTP_FROM must be one bare mailbox address")
 	}
 	switch smtp.TLSMode {
 	case "implicit", "starttls":
+		if smtp.Username == "" {
+			return fmt.Errorf("IDENTITY_SMTP_USERNAME is required for authenticated smtp")
+		}
+		if smtp.Password == "" {
+			return fmt.Errorf("IDENTITY_SMTP_PASSWORD is required for authenticated smtp")
+		}
 	case "none":
 		if environment == "production" {
 			return fmt.Errorf("IDENTITY_SMTP_TLS_MODE none is not allowed in production")
-		}
-		if !isLoopbackHost(smtp.Host) {
-			return fmt.Errorf("IDENTITY_SMTP_TLS_MODE none requires an exact loopback host")
 		}
 	default:
 		return fmt.Errorf("IDENTITY_SMTP_TLS_MODE must be implicit, starttls, or none")
 	}
 	return nil
-}
-
-func isLoopbackHost(host string) bool {
-	switch host {
-	case "localhost", "127.0.0.1", "::1":
-		return true
-	default:
-		return false
-	}
 }
 
 func validateHTTPBaseURL(name, value string, requireHTTPS bool) error {

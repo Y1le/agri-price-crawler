@@ -72,22 +72,23 @@ func newSenderWithTLSConfig(
 	if smtpConfig.Port < 1 || smtpConfig.Port > 65535 {
 		return nil, errors.New("create SMTP sender: port is invalid")
 	}
-	if smtpConfig.Username == "" {
-		return nil, errors.New("create SMTP sender: username is required")
-	}
-	if smtpConfig.Password == "" {
-		return nil, errors.New("create SMTP sender: password is required")
-	}
 	envelopeFrom, err := parseBareAddress(smtpConfig.From)
 	if err != nil {
 		return nil, errors.New("create SMTP sender: sender is invalid")
 	}
 	switch smtpConfig.TLSMode {
 	case "implicit", "starttls":
-	case "none":
-		if !isLoopbackSMTPHost(smtpConfig.Host) {
-			return nil, errors.New("create SMTP sender: plaintext SMTP requires loopback host")
+		if smtpConfig.Username == "" {
+			return nil, errors.New("create SMTP sender: username is required")
 		}
+		if smtpConfig.Password == "" {
+			return nil, errors.New("create SMTP sender: password is required")
+		}
+	case "none":
+		// Never retain credentials for an explicitly unauthenticated plaintext
+		// development connection, even if they were accidentally configured.
+		smtpConfig.Username = ""
+		smtpConfig.Password = ""
 	default:
 		return nil, errors.New("create SMTP sender: TLS mode is invalid")
 	}
@@ -171,14 +172,16 @@ func (sender *Sender) SendCode(
 		!supportsExtension(client, "SMTPUTF8") {
 		return errors.New("send verification email: SMTPUTF8 is unavailable")
 	}
-	auth := netsmtp.PlainAuth(
-		"",
-		sender.config.Username,
-		sender.config.Password,
-		sender.config.Host,
-	)
-	if err := client.Auth(auth); err != nil {
-		return exchangeError(exchangeCtx, "SMTP authentication failed")
+	if sender.config.TLSMode != "none" {
+		auth := netsmtp.PlainAuth(
+			"",
+			sender.config.Username,
+			sender.config.Password,
+			sender.config.Host,
+		)
+		if err := client.Auth(auth); err != nil {
+			return exchangeError(exchangeCtx, "SMTP authentication failed")
+		}
 	}
 	if err := client.Mail(sender.envelopeFrom); err != nil {
 		return exchangeError(exchangeCtx, "SMTP sender rejected")
@@ -288,15 +291,6 @@ func isASCII(value string) bool {
 func supportsExtension(client smtpClient, extension string) bool {
 	ok, _ := client.Extension(extension)
 	return ok
-}
-
-func isLoopbackSMTPHost(host string) bool {
-	switch host {
-	case "localhost", "127.0.0.1", "::1":
-		return true
-	default:
-		return false
-	}
 }
 
 func dialSMTPClient(ctx context.Context, smtpConfig config.SMTP) (smtpClient, error) {

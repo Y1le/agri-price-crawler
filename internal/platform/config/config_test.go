@@ -396,8 +396,10 @@ func TestIdentityGatewayValidationAllowsDevelopmentPlaintextSMTP(t *testing.T) {
 	setValidIdentityEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
 	setValidSMTPEnv(t)
-	t.Setenv("IDENTITY_SMTP_HOST", "localhost")
+	t.Setenv("IDENTITY_SMTP_HOST", "mailpit")
 	t.Setenv("IDENTITY_SMTP_TLS_MODE", "none")
+	t.Setenv("IDENTITY_SMTP_USERNAME", "")
+	t.Setenv("IDENTITY_SMTP_PASSWORD", "")
 
 	got, err := config.Load()
 	if err != nil {
@@ -503,42 +505,27 @@ func TestIdentityGatewayValidationRequiresWholeMinuteOTPTTL(t *testing.T) {
 	}
 }
 
-func TestIdentityGatewayValidationAllowsPlaintextSMTPOnlyOnLoopback(t *testing.T) {
-	for _, host := range []string{"localhost", "127.0.0.1", "::1"} {
-		t.Run("allows_"+strings.ReplaceAll(host, ":", "_"), func(t *testing.T) {
-			setValidIdentityEnv(t)
-			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
-			setValidSMTPEnv(t)
-			t.Setenv("IDENTITY_SMTP_HOST", host)
-			t.Setenv("IDENTITY_SMTP_TLS_MODE", "none")
+func TestIdentityGatewayValidationTLSModesRequireCredentials(t *testing.T) {
+	for _, mode := range []string{"implicit", "starttls"} {
+		for _, credential := range []string{"IDENTITY_SMTP_USERNAME", "IDENTITY_SMTP_PASSWORD"} {
+			name := mode + "_" + strings.TrimPrefix(credential, "IDENTITY_SMTP_")
+			t.Run(name, func(t *testing.T) {
+				setValidIdentityEnv(t)
+				t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+				setValidSMTPEnv(t)
+				t.Setenv("IDENTITY_SMTP_TLS_MODE", mode)
+				t.Setenv(credential, "")
 
-			got, err := config.Load()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := got.ValidateGateway(); err != nil {
-				t.Fatalf("ValidateGateway() rejected loopback SMTP: %v", err)
-			}
-		})
-	}
-
-	for _, host := range []string{"smtp.example.com", "localhost.example.com", "127.0.0.2"} {
-		t.Run("rejects_"+strings.ReplaceAll(host, ".", "_"), func(t *testing.T) {
-			setValidIdentityEnv(t)
-			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
-			setValidSMTPEnv(t)
-			t.Setenv("IDENTITY_SMTP_HOST", host)
-			t.Setenv("IDENTITY_SMTP_TLS_MODE", "none")
-
-			got, err := config.Load()
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = got.ValidateGateway()
-			if err == nil || !strings.Contains(err.Error(), "IDENTITY_SMTP_TLS_MODE") {
-				t.Fatalf("ValidateGateway() error = %v", err)
-			}
-		})
+				got, err := config.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = got.ValidateGateway()
+				if err == nil || !strings.Contains(err.Error(), credential) {
+					t.Fatalf("ValidateGateway() error = %v", err)
+				}
+			})
+		}
 	}
 }
 
