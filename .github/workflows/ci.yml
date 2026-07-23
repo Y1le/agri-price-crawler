@@ -97,6 +97,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TEST_DATABASE_URL: postgres://agri:agri_dev@localhost:5432/agri?sslmode=disable
+      TEST_REDIS_ADDR: localhost:6379
 
     steps:
       - name: Check out code
@@ -111,6 +112,15 @@ jobs:
 
       - name: Start PostgreSQL and Redis
         run: docker compose -f docker-compose.v2.yaml up -d --wait postgres redis
+
+      - name: Generate ephemeral Identity secrets
+        run: |
+          jwt_seed="$(openssl rand -base64 32)"
+          otp_pepper="$(openssl rand -base64 32)"
+          echo "::add-mask::$jwt_seed"
+          echo "::add-mask::$otp_pepper"
+          echo "IDENTITY_JWT_PRIVATE_KEY_BASE64=$jwt_seed" >> "$GITHUB_ENV"
+          echo "IDENTITY_OTP_PEPPER_BASE64=$otp_pepper" >> "$GITHUB_ENV"
 
       - name: Test backend v2
         run: make v2-test

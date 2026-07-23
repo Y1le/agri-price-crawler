@@ -45,8 +45,15 @@ services:
   gateway:
     <<: *backend-v2
     environment:
+      APP_ENV: development
       DATABASE_URL: postgres://agri:agri_dev@postgres:5432/agri?sslmode=disable
       REDIS_ADDR: redis:6379
+      IDENTITY_JWT_PRIVATE_KEY_BASE64: ${IDENTITY_JWT_PRIVATE_KEY_BASE64:-}
+      IDENTITY_OTP_PEPPER_BASE64: ${IDENTITY_OTP_PEPPER_BASE64:-}
+      IDENTITY_EMAIL_DRIVER: memory
+      IDENTITY_WECHAT_APP_ID: wx-local-development
+      IDENTITY_WECHAT_APP_SECRET: local-placeholder-not-a-secret
+      IDENTITY_WEB_ALLOWED_ORIGINS: http://localhost:3000
     ports:
       - "8080:8080"
     depends_on:

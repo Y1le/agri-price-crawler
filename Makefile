@@ -55,7 +55,7 @@ docker-build: tidy gen
 .PHONY: v2-test
 v2-test:
 	@echo "===========> Running backend v2 tests <==========="
-	$(GO) test -p 1 -race ./internal/platform/... ./internal/gateway/... ./internal/bootstrap/...
+	$(GO) test -p 1 -race ./internal/platform/... ./internal/platform/httpx/... ./internal/identity/... ./internal/gateway/... ./internal/bootstrap/...
 
 # Backend v2 binaries
 .PHONY: v2-build
@@ -69,11 +69,26 @@ v2-build:
 # Backend v2 live smoke test
 .PHONY: v2-smoke
 v2-smoke:
-	docker compose -f docker-compose.v2.yaml up --build --wait
+	@set -eu; \
+		IDENTITY_JWT_PRIVATE_KEY_BASE64="$$(openssl rand -base64 32)"; \
+		IDENTITY_OTP_PEPPER_BASE64="$$(openssl rand -base64 32)"; \
+		export IDENTITY_JWT_PRIVATE_KEY_BASE64 IDENTITY_OTP_PEPPER_BASE64; \
+		docker compose -f docker-compose.v2.yaml up --build --wait
 	curl --fail --silent --show-error http://localhost:8080/livez
 	@echo
 	curl --fail --silent --show-error http://localhost:8080/readyz
 	@echo
+
+# Backend v2 Identity integration test
+.PHONY: v2-identity-integration
+v2-identity-integration:
+	@set -eu; \
+		trap 'docker compose -f docker-compose.v2.yaml stop postgres redis' EXIT INT TERM; \
+		docker compose -f docker-compose.v2.yaml up -d --wait postgres redis; \
+		docker compose -f docker-compose.v2.yaml run --build --rm migrate; \
+		TEST_DATABASE_URL='postgres://agri:agri_dev@localhost:5432/agri?sslmode=disable' \
+		TEST_REDIS_ADDR='localhost:6379' \
+		$(GO) test -count=1 ./internal/bootstrap -run IdentityIntegration
 
 # 帮助信息
 .PHONY: help
