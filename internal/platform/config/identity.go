@@ -11,6 +11,17 @@ import (
 	"time"
 )
 
+const (
+	maxAccessTTL       = time.Hour
+	maxRefreshTTL      = 90 * 24 * time.Hour
+	maxReuseGrace      = time.Minute
+	maxOTPTTL          = 15 * time.Minute
+	maxOTPAttempts     = 10
+	maxOTPCooldown     = time.Hour
+	maxHourlyLimit     = 100_000
+	maxProviderTimeout = 30 * time.Second
+)
+
 type Identity struct {
 	JWT            IdentityJWT
 	OTP            IdentityOTP
@@ -132,8 +143,9 @@ func loadIdentity(environment string) (Identity, error) {
 	if environment == "production" {
 		cookieName = "__Secure-agri_refresh"
 	}
-	enabledClients := stringListEnv("IDENTITY_ENABLED_CLIENTS")
-	if len(enabledClients) == 0 {
+	enabledClientsValue, enabledClientsSet := os.LookupEnv("IDENTITY_ENABLED_CLIENTS")
+	enabledClients := stringList(enabledClientsValue)
+	if !enabledClientsSet {
 		enabledClients = []string{"web", "wechat_mini"}
 	}
 
@@ -187,6 +199,9 @@ func loadIdentity(environment string) (Identity, error) {
 func (c Config) ValidateGateway() error {
 	identity := c.Identity
 
+	if c.Environment != "development" && c.Environment != "production" {
+		return fmt.Errorf("APP_ENV must be development or production")
+	}
 	if len(identity.JWT.PrivateKey) != ed25519.PrivateKeySize {
 		return fmt.Errorf("IDENTITY_JWT_PRIVATE_KEY_BASE64 must contain exactly %d seed bytes", ed25519.SeedSize)
 	}
@@ -199,14 +214,17 @@ func (c Config) ValidateGateway() error {
 	if identity.JWT.Audience == "" {
 		return fmt.Errorf("IDENTITY_JWT_AUDIENCE is required")
 	}
-	if identity.JWT.AccessTTL <= 0 {
-		return fmt.Errorf("IDENTITY_JWT_ACCESS_TTL must be positive")
+	if identity.JWT.AccessTTL <= 0 || identity.JWT.AccessTTL > maxAccessTTL {
+		return fmt.Errorf("IDENTITY_JWT_ACCESS_TTL must be positive and at most 1h")
 	}
-	if identity.RefreshTTL <= 0 {
-		return fmt.Errorf("IDENTITY_REFRESH_TTL must be positive")
+	if identity.RefreshTTL <= 0 || identity.RefreshTTL > maxRefreshTTL {
+		return fmt.Errorf("IDENTITY_REFRESH_TTL must be positive and at most 2160h")
 	}
 	if identity.ReuseGrace < 0 {
 		return fmt.Errorf("IDENTITY_REFRESH_REUSE_GRACE must not be negative")
+	}
+	if identity.ReuseGrace > maxReuseGrace {
+		return fmt.Errorf("IDENTITY_REFRESH_REUSE_GRACE must be at most 1m")
 	}
 	if identity.ReuseGrace >= identity.RefreshTTL {
 		return fmt.Errorf("IDENTITY_REFRESH_REUSE_GRACE must be shorter than IDENTITY_REFRESH_TTL")
@@ -215,20 +233,20 @@ func (c Config) ValidateGateway() error {
 	if len(identity.OTP.Pepper) < 32 {
 		return fmt.Errorf("IDENTITY_OTP_PEPPER_BASE64 must contain at least 32 bytes")
 	}
-	if identity.OTP.TTL <= 0 {
-		return fmt.Errorf("IDENTITY_OTP_TTL must be positive")
+	if identity.OTP.TTL <= 0 || identity.OTP.TTL > maxOTPTTL {
+		return fmt.Errorf("IDENTITY_OTP_TTL must be positive and at most 15m")
 	}
-	if identity.OTP.Attempts <= 0 {
-		return fmt.Errorf("IDENTITY_OTP_ATTEMPTS must be positive")
+	if identity.OTP.Attempts <= 0 || identity.OTP.Attempts > maxOTPAttempts {
+		return fmt.Errorf("IDENTITY_OTP_ATTEMPTS must be between 1 and 10")
 	}
-	if identity.OTP.Cooldown <= 0 {
-		return fmt.Errorf("IDENTITY_OTP_COOLDOWN must be positive")
+	if identity.OTP.Cooldown <= 0 || identity.OTP.Cooldown > maxOTPCooldown {
+		return fmt.Errorf("IDENTITY_OTP_COOLDOWN must be positive and at most 1h")
 	}
-	if identity.OTP.EmailPerHour <= 0 {
-		return fmt.Errorf("IDENTITY_OTP_EMAIL_PER_HOUR must be positive")
+	if identity.OTP.EmailPerHour <= 0 || identity.OTP.EmailPerHour > maxHourlyLimit {
+		return fmt.Errorf("IDENTITY_OTP_EMAIL_PER_HOUR must be between 1 and 100000")
 	}
-	if identity.OTP.IPPerHour <= 0 {
-		return fmt.Errorf("IDENTITY_OTP_IP_PER_HOUR must be positive")
+	if identity.OTP.IPPerHour <= 0 || identity.OTP.IPPerHour > maxHourlyLimit {
+		return fmt.Errorf("IDENTITY_OTP_IP_PER_HOUR must be between 1 and 100000")
 	}
 
 	if identity.WeChat.AppID == "" {
@@ -237,14 +255,17 @@ func (c Config) ValidateGateway() error {
 	if identity.WeChat.AppSecret == "" {
 		return fmt.Errorf("IDENTITY_WECHAT_APP_SECRET is required")
 	}
-	if err := validateHTTPBaseURL("IDENTITY_WECHAT_BASE_URL", identity.WeChat.BaseURL); err != nil {
+	if err := validateHTTPBaseURL("IDENTITY_WECHAT_BASE_URL", identity.WeChat.BaseURL, c.Environment == "production"); err != nil {
 		return err
 	}
-	if identity.WeChat.Timeout <= 0 {
-		return fmt.Errorf("IDENTITY_WECHAT_TIMEOUT must be positive")
+	if identity.WeChat.Timeout <= 0 || identity.WeChat.Timeout > maxProviderTimeout {
+		return fmt.Errorf("IDENTITY_WECHAT_TIMEOUT must be positive and at most 30s")
 	}
-	if identity.WeChat.IPPerHour <= 0 {
-		return fmt.Errorf("IDENTITY_WECHAT_IP_PER_HOUR must be positive")
+	if identity.WeChat.IPPerHour <= 0 || identity.WeChat.IPPerHour > maxHourlyLimit {
+		return fmt.Errorf("IDENTITY_WECHAT_IP_PER_HOUR must be between 1 and 100000")
+	}
+	if identity.SMTP.Timeout <= 0 || identity.SMTP.Timeout > maxProviderTimeout {
+		return fmt.Errorf("IDENTITY_SMTP_TIMEOUT must be positive and at most 30s")
 	}
 
 	switch identity.EmailDriver {
@@ -289,7 +310,7 @@ func (c Config) ValidateGateway() error {
 		}
 	}
 	for _, origin := range identity.Web.AllowedOrigins {
-		if err := validateOrigin(origin); err != nil {
+		if err := validateOrigin(origin, c.Environment == "production"); err != nil {
 			return fmt.Errorf("IDENTITY_WEB_ALLOWED_ORIGINS: %w", err)
 		}
 	}
@@ -303,9 +324,15 @@ func identityPrivateKeyEnv() (ed25519.PrivateKey, error) {
 		return nil, err
 	}
 	if len(seed) != ed25519.SeedSize {
+		clear(seed)
 		return nil, fmt.Errorf("IDENTITY_JWT_PRIVATE_KEY_BASE64 must contain exactly %d seed bytes", ed25519.SeedSize)
 	}
-	return ed25519.NewKeyFromSeed(seed), nil
+	return identityPrivateKeyFromSeed(seed), nil
+}
+
+func identityPrivateKeyFromSeed(seed []byte) ed25519.PrivateKey {
+	defer clear(seed)
+	return ed25519.NewKeyFromSeed(seed)
 }
 
 func base64SecretEnv(name string) ([]byte, error) {
@@ -321,10 +348,10 @@ func base64SecretEnv(name string) ([]byte, error) {
 }
 
 func stringListEnv(name string) []string {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return nil
-	}
+	return stringList(os.Getenv(name))
+}
+
+func stringList(raw string) []string {
 	values := strings.Split(raw, ",")
 	result := make([]string, 0, len(values))
 	for _, value := range values {
@@ -360,16 +387,16 @@ func validateSMTP(smtp SMTP, environment string) error {
 	default:
 		return fmt.Errorf("IDENTITY_SMTP_TLS_MODE must be implicit, starttls, or none")
 	}
-	if smtp.Timeout <= 0 {
-		return fmt.Errorf("IDENTITY_SMTP_TIMEOUT must be positive")
-	}
 	return nil
 }
 
-func validateHTTPBaseURL(name, value string) error {
+func validateHTTPBaseURL(name, value string, requireHTTPS bool) error {
 	parsed, err := url.Parse(value)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return fmt.Errorf("%s must be an absolute HTTP(S) URL", name)
+	}
+	if requireHTTPS && parsed.Scheme != "https" {
+		return fmt.Errorf("%s must use https in production", name)
 	}
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("%s must not contain credentials, query, or fragment", name)
@@ -377,16 +404,19 @@ func validateHTTPBaseURL(name, value string) error {
 	return nil
 }
 
-func validateOrigin(origin string) error {
+func validateOrigin(origin string, requireHTTPS bool) error {
 	if origin == "*" {
 		return fmt.Errorf("wildcard origin is not allowed")
 	}
 	parsed, err := url.Parse(origin)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return fmt.Errorf("%q is not an absolute HTTP(S) origin", origin)
+		return fmt.Errorf("value must be an absolute HTTP(S) origin")
+	}
+	if requireHTTPS && parsed.Scheme != "https" {
+		return fmt.Errorf("origin must use https in production")
 	}
 	if parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return fmt.Errorf("%q is not an exact origin", origin)
+		return fmt.Errorf("value must be an exact origin")
 	}
 	return nil
 }

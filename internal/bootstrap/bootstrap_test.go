@@ -129,6 +129,7 @@ func validGatewayConfig() config.Config {
 			RefreshTTL:     30 * 24 * time.Hour,
 			ReuseGrace:     10 * time.Second,
 			WeChat:         config.WeChat{AppID: "wx-test", AppSecret: "test-secret", BaseURL: "https://api.weixin.qq.com", Timeout: 5 * time.Second, IPPerHour: 60},
+			SMTP:           config.SMTP{Timeout: 5 * time.Second},
 			EmailDriver:    "memory",
 			EnabledClients: []string{"web", "wechat_mini"},
 			Web:            config.WebSecurity{CookieName: "agri_refresh"},

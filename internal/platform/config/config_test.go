@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 func clearIdentityEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv("APP_ENV", "")
 	for _, name := range []string{
 		"IDENTITY_JWT_PRIVATE_KEY_BASE64",
 		"IDENTITY_JWT_KEY_ID",
@@ -47,6 +49,11 @@ func clearIdentityEnv(t *testing.T) {
 		"IDENTITY_TRUSTED_PROXIES",
 	} {
 		t.Setenv(name, "")
+		if name == "IDENTITY_ENABLED_CLIENTS" {
+			if err := os.Unsetenv(name); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 }
 
@@ -68,7 +75,7 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Environment != "development" || got.Gateway.Addr != ":8080" {
-		t.Fatalf("got %+v", got)
+		t.Fatalf("environment = %q, Gateway address = %q", got.Environment, got.Gateway.Addr)
 	}
 	if got.Redis.Addr != "localhost:6379" {
 		t.Fatalf("got %+v", got.Redis)
@@ -171,7 +178,7 @@ func TestLoadIdentityDefaults(t *testing.T) {
 	if got.Identity.WeChat.BaseURL != "https://api.weixin.qq.com" ||
 		got.Identity.WeChat.Timeout != 5*time.Second ||
 		got.Identity.WeChat.IPPerHour != 60 {
-		t.Fatalf("WeChat defaults = %+v", got.Identity.WeChat)
+		t.Fatalf("WeChat non-secret defaults do not match the documented values")
 	}
 	if got.Identity.SMTP.Timeout != 5*time.Second {
 		t.Fatalf("SMTP timeout = %v", got.Identity.SMTP.Timeout)
@@ -200,6 +207,21 @@ func TestLoadIdentityProductionDefaults(t *testing.T) {
 	}
 	if err := got.ValidateGateway(); err != nil {
 		t.Fatalf("ValidateGateway() error = %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidEnvironment(t *testing.T) {
+	for _, value := range []string{"prod", "Production", "DEVELOPMENT", " production ", "staging"} {
+		t.Run(value, func(t *testing.T) {
+			clearIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv("APP_ENV", value)
+
+			_, err := config.Load()
+			if err == nil || !strings.Contains(err.Error(), "APP_ENV") {
+				t.Fatalf("Load() error = %v, want APP_ENV validation error", err)
+			}
+		})
 	}
 }
 
@@ -286,6 +308,54 @@ func TestIdentityGatewayValidationRejectsInvalidProductionSecurity(t *testing.T)
 	}
 }
 
+func TestIdentityGatewayValidationRequiresHTTPSInProduction(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		value   string
+		message string
+	}{
+		{name: "WeChat base URL", env: "IDENTITY_WECHAT_BASE_URL", value: "http://wechat.example.com", message: "IDENTITY_WECHAT_BASE_URL"},
+		{name: "Web origin", env: "IDENTITY_WEB_ALLOWED_ORIGINS", value: "http://app.example.com", message: "IDENTITY_WEB_ALLOWED_ORIGINS"},
+		{name: "one insecure Web origin", env: "IDENTITY_WEB_ALLOWED_ORIGINS", value: "https://app.example.com,http://admin.example.com", message: "IDENTITY_WEB_ALLOWED_ORIGINS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv("APP_ENV", "production")
+			setValidSMTPEnv(t)
+			t.Setenv("IDENTITY_WEB_ALLOWED_ORIGINS", "https://app.example.com")
+			t.Setenv(tt.env, tt.value)
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = got.ValidateGateway()
+			if err == nil || !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("ValidateGateway() error = %v, want field %s", err, tt.message)
+			}
+		})
+	}
+}
+
+func TestIdentityGatewayValidationAllowsHTTPInDevelopment(t *testing.T) {
+	setValidIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+	t.Setenv("IDENTITY_WECHAT_BASE_URL", "http://127.0.0.1:18080")
+	t.Setenv("IDENTITY_WEB_ALLOWED_ORIGINS", "http://localhost:3000")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := got.ValidateGateway(); err != nil {
+		t.Fatalf("ValidateGateway() error = %v", err)
+	}
+}
+
 func TestIdentityGatewayValidationSMTP(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -347,6 +417,120 @@ func TestIdentityGatewayValidationRejectsFutureAppClient(t *testing.T) {
 	err = got.ValidateGateway()
 	if err == nil || !strings.Contains(err.Error(), "IDENTITY_ENABLED_CLIENTS") {
 		t.Fatalf("ValidateGateway() error = %v", err)
+	}
+}
+
+func TestIdentityGatewayValidationRejectsExplicitEmptyClients(t *testing.T) {
+	for _, value := range []string{"", " ", ",", " , "} {
+		t.Run(strings.ReplaceAll(value, " ", "_"), func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv("IDENTITY_ENABLED_CLIENTS", value)
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = got.ValidateGateway()
+			if err == nil || !strings.Contains(err.Error(), "IDENTITY_ENABLED_CLIENTS") {
+				t.Fatalf("ValidateGateway() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestIdentityGatewayValidationRejectsUnsafeUpperBounds(t *testing.T) {
+	tests := []struct {
+		name       string
+		env        string
+		value      string
+		message    string
+		enableSMTP bool
+	}{
+		{name: "Access TTL", env: "IDENTITY_JWT_ACCESS_TTL", value: "1h1s", message: "IDENTITY_JWT_ACCESS_TTL"},
+		{name: "Refresh TTL", env: "IDENTITY_REFRESH_TTL", value: "2160h1s", message: "IDENTITY_REFRESH_TTL"},
+		{name: "reuse grace", env: "IDENTITY_REFRESH_REUSE_GRACE", value: "1m1s", message: "IDENTITY_REFRESH_REUSE_GRACE"},
+		{name: "OTP TTL", env: "IDENTITY_OTP_TTL", value: "15m1s", message: "IDENTITY_OTP_TTL"},
+		{name: "OTP attempts", env: "IDENTITY_OTP_ATTEMPTS", value: "11", message: "IDENTITY_OTP_ATTEMPTS"},
+		{name: "OTP cooldown", env: "IDENTITY_OTP_COOLDOWN", value: "1h1s", message: "IDENTITY_OTP_COOLDOWN"},
+		{name: "OTP email limit", env: "IDENTITY_OTP_EMAIL_PER_HOUR", value: "100001", message: "IDENTITY_OTP_EMAIL_PER_HOUR"},
+		{name: "OTP IP limit", env: "IDENTITY_OTP_IP_PER_HOUR", value: "100001", message: "IDENTITY_OTP_IP_PER_HOUR"},
+		{name: "WeChat IP limit", env: "IDENTITY_WECHAT_IP_PER_HOUR", value: "100001", message: "IDENTITY_WECHAT_IP_PER_HOUR"},
+		{name: "WeChat timeout", env: "IDENTITY_WECHAT_TIMEOUT", value: "31s", message: "IDENTITY_WECHAT_TIMEOUT"},
+		{name: "SMTP timeout", env: "IDENTITY_SMTP_TIMEOUT", value: "31s", message: "IDENTITY_SMTP_TIMEOUT"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			if tt.enableSMTP {
+				setValidSMTPEnv(t)
+			}
+			t.Setenv(tt.env, tt.value)
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = got.ValidateGateway()
+			if err == nil || !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("ValidateGateway() error = %v, want field %s", err, tt.message)
+			}
+		})
+	}
+}
+
+func TestIdentityGatewayValidationAcceptsDocumentedUpperBounds(t *testing.T) {
+	setValidIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+	setValidSMTPEnv(t)
+	t.Setenv("IDENTITY_JWT_ACCESS_TTL", "1h")
+	t.Setenv("IDENTITY_REFRESH_TTL", "2160h")
+	t.Setenv("IDENTITY_REFRESH_REUSE_GRACE", "1m")
+	t.Setenv("IDENTITY_OTP_TTL", "15m")
+	t.Setenv("IDENTITY_OTP_ATTEMPTS", "10")
+	t.Setenv("IDENTITY_OTP_COOLDOWN", "1h")
+	t.Setenv("IDENTITY_OTP_EMAIL_PER_HOUR", "100000")
+	t.Setenv("IDENTITY_OTP_IP_PER_HOUR", "100000")
+	t.Setenv("IDENTITY_WECHAT_IP_PER_HOUR", "100000")
+	t.Setenv("IDENTITY_WECHAT_TIMEOUT", "30s")
+	t.Setenv("IDENTITY_SMTP_TIMEOUT", "30s")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := got.ValidateGateway(); err != nil {
+		t.Fatalf("ValidateGateway() error = %v", err)
+	}
+}
+
+func TestIdentityValidationErrorsDoNotLeakSecrets(t *testing.T) {
+	setValidIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+	t.Setenv("APP_ENV", "production")
+	setValidSMTPEnv(t)
+	t.Setenv("IDENTITY_WEB_ALLOWED_ORIGINS", "http://app.example.com")
+
+	secrets := []string{
+		os.Getenv("IDENTITY_JWT_PRIVATE_KEY_BASE64"),
+		os.Getenv("IDENTITY_OTP_PEPPER_BASE64"),
+		os.Getenv("IDENTITY_WECHAT_APP_SECRET"),
+		os.Getenv("IDENTITY_SMTP_PASSWORD"),
+	}
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = got.ValidateGateway()
+	if err == nil {
+		t.Fatal("ValidateGateway() succeeded with insecure production origin")
+	}
+	for _, secret := range secrets {
+		if secret != "" && strings.Contains(err.Error(), secret) {
+			t.Fatalf("error leaked a configured secret: %q", err)
+		}
 	}
 }
 

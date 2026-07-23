@@ -46,6 +46,9 @@ func Load() (Config, error) {
 	}
 
 	environment := stringEnv("APP_ENV", "development")
+	if environment != "development" && environment != "production" {
+		return Config{}, fmt.Errorf("APP_ENV must be development or production")
+	}
 
 	redisDB, err := intEnv("REDIS_DB", 0)
 	if err != nil {
