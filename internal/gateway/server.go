@@ -8,18 +8,22 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/Y1le/agri-price-crawler/internal/platform/httpx"
+	"github.com/google/uuid"
 )
 
 const (
-	healthJSON  = `{"status":"ok"}`
-	problemJSON = `{"type":"about:blank","title":"Service Not Ready","status":503,"code":"service_not_ready"}`
+	healthJSON = `{"status":"ok"}`
 )
 
 // Config configures an HTTP gateway server.
 type Config struct {
-	Addr   string
-	Ready  func(context.Context) error
-	Logger *slog.Logger
+	Addr       string
+	Ready      func(context.Context) error
+	Logger     *slog.Logger
+	API        http.Handler
+	Middleware func(http.Handler) http.Handler
 }
 
 // Server serves infrastructure HTTP endpoints.
@@ -41,7 +45,14 @@ func New(config Config) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /livez", server.livez)
 	mux.HandleFunc("GET /readyz", server.readyz)
-	server.handler = mux
+	if config.API != nil {
+		mux.Handle("/api/v1/", config.API)
+	}
+	if config.Middleware != nil {
+		server.handler = config.Middleware(mux)
+	} else {
+		server.handler = httpx.WithRequestID(mux)
+	}
 
 	return server
 }
@@ -96,7 +107,19 @@ func (s *Server) livez(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	if s.ready != nil && s.ready(r.Context()) != nil {
-		writeJSON(w, http.StatusServiceUnavailable, "application/problem+json", problemJSON)
+		traceID := httpx.RequestID(r.Context())
+		if traceID == "" {
+			traceID = uuid.NewString()
+			w.Header().Set("X-Request-ID", traceID)
+		}
+		httpx.WriteProblem(w, httpx.Problem{
+			Type:    "about:blank",
+			Title:   "Service Not Ready",
+			Status:  http.StatusServiceUnavailable,
+			Code:    "service_not_ready",
+			TraceID: traceID,
+			Detail:  "服务暂不可用，请稍后重试。",
+		})
 		return
 	}
 

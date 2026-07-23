@@ -2,12 +2,16 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Y1le/agri-price-crawler/internal/platform/httpx"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHandlerLivezReturnsHealth(t *testing.T) {
@@ -60,9 +64,44 @@ func TestHandlerReadyzReturnsProblemWhenNotReady(t *testing.T) {
 	if contentType := recorder.Header().Get("Content-Type"); contentType != "application/problem+json" {
 		t.Errorf("Content-Type = %q, want %q", contentType, "application/problem+json")
 	}
-	if body := recorder.Body.String(); body != `{"type":"about:blank","title":"Service Not Ready","status":503,"code":"service_not_ready"}` {
-		t.Errorf("body = %q, want %q", body, `{"type":"about:blank","title":"Service Not Ready","status":503,"code":"service_not_ready"}`)
+	var problem httpx.Problem
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &problem))
+	require.Equal(t, http.StatusServiceUnavailable, problem.Status)
+	require.Equal(t, "service_not_ready", problem.Code)
+	require.NotEmpty(t, problem.TraceID)
+}
+
+func TestHandlerMountsAPIAndWrapsWholeMuxWithMiddleware(t *testing.T) {
+	var middlewareCalls int
+	server := New(Config{
+		API: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, "/api/v1/example", r.URL.Path)
+			w.WriteHeader(http.StatusCreated)
+		}),
+		Middleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				middlewareCalls++
+				w.Header().Set("X-Middleware", "yes")
+				next.ServeHTTP(w, r)
+			})
+		},
+	})
+
+	for _, target := range []string{"/api/v1/example", "/livez"} {
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+		require.Equal(t, "yes", response.Header().Get("X-Middleware"))
 	}
+	require.Equal(t, 2, middlewareCalls)
+}
+
+func TestHandlerDoesNotExposeAPIOutsideAPIPrefix(t *testing.T) {
+	server := New(Config{API: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("API must not receive paths outside /api/v1/")
+	})})
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/private", nil))
+	require.Equal(t, http.StatusNotFound, response.Code)
 }
 
 func TestRunShutsDownWhenContextIsCancelled(t *testing.T) {
