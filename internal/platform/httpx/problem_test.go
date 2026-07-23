@@ -3,6 +3,7 @@ package httpx_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -79,18 +80,35 @@ func TestWriteProblemOmitsEmptySafeDetail(t *testing.T) {
 	require.NotContains(t, string(writer.body), `"detail"`)
 }
 
-func TestWriteProblemSanitizesInvalidHTTPStatusWithoutMutatingCaller(t *testing.T) {
+func TestWriteProblemAllowsOnlyErrorHTTPStatusesWithoutMutatingCaller(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []int{0, 99, 1000} {
-		status := status
-		t.Run(http.StatusText(status), func(t *testing.T) {
+	tests := []struct {
+		status int
+		want   int
+	}{
+		{status: 0, want: http.StatusInternalServerError},
+		{status: 99, want: http.StatusInternalServerError},
+		{status: 100, want: http.StatusInternalServerError},
+		{status: 101, want: http.StatusInternalServerError},
+		{status: 204, want: http.StatusInternalServerError},
+		{status: 304, want: http.StatusInternalServerError},
+		{status: 399, want: http.StatusInternalServerError},
+		{status: 400, want: http.StatusBadRequest},
+		{status: 599, want: 599},
+		{status: 600, want: http.StatusInternalServerError},
+		{status: 999, want: http.StatusInternalServerError},
+		{status: 1000, want: http.StatusInternalServerError},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(fmt.Sprintf("%d", test.status), func(t *testing.T) {
 			t.Parallel()
 
 			problem := httpx.Problem{
 				Type:    "about:blank",
 				Title:   "无效状态",
-				Status:  status,
+				Status:  test.status,
 				Code:    "invalid_status",
 				TraceID: "request-invalid-status",
 			}
@@ -100,11 +118,13 @@ func TestWriteProblemSanitizesInvalidHTTPStatusWithoutMutatingCaller(t *testing.
 				httpx.WriteProblem(response, problem)
 			})
 
-			require.Equal(t, http.StatusInternalServerError, response.Code)
+			require.Equal(t, test.want, response.Code)
+			require.NotEmpty(t, response.Body.Bytes(), "every Problem response must include its JSON body")
 			var got httpx.Problem
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &got))
-			require.Equal(t, http.StatusInternalServerError, got.Status)
-			require.Equal(t, status, problem.Status, "WriteProblem must not mutate its caller's value")
+			require.Equal(t, test.want, got.Status)
+			require.Equal(t, response.Code, got.Status, "HTTP and JSON statuses must agree")
+			require.Equal(t, test.status, problem.Status, "WriteProblem must not mutate its caller's value")
 		})
 	}
 }
