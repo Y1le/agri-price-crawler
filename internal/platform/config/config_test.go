@@ -481,6 +481,41 @@ func TestIdentityGatewayValidationRejectsUnsafeUpperBounds(t *testing.T) {
 	}
 }
 
+func TestIdentityGatewayValidationRequiresWholeSecondAccessTTL(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "sub-second", value: "500ms", wantErr: true},
+		{name: "fractional-second", value: "1500ms", wantErr: true},
+		{name: "one-second boundary", value: "1s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv("IDENTITY_JWT_ACCESS_TTL", tt.value)
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = got.ValidateGateway()
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "IDENTITY_JWT_ACCESS_TTL") {
+					t.Fatalf("ValidateGateway() error = %v, want IDENTITY_JWT_ACCESS_TTL error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateGateway() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestIdentityGatewayValidationAcceptsDocumentedUpperBounds(t *testing.T) {
 	setValidIdentityEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/agri")

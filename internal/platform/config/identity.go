@@ -214,8 +214,10 @@ func (c Config) ValidateGateway() error {
 	if identity.JWT.Audience == "" {
 		return fmt.Errorf("IDENTITY_JWT_AUDIENCE is required")
 	}
-	if identity.JWT.AccessTTL <= 0 || identity.JWT.AccessTTL > maxAccessTTL {
-		return fmt.Errorf("IDENTITY_JWT_ACCESS_TTL must be positive and at most 1h")
+	if identity.JWT.AccessTTL < time.Second ||
+		identity.JWT.AccessTTL%time.Second != 0 ||
+		identity.JWT.AccessTTL > maxAccessTTL {
+		return fmt.Errorf("IDENTITY_JWT_ACCESS_TTL must be whole seconds between 1s and 1h")
 	}
 	if identity.RefreshTTL <= 0 || identity.RefreshTTL > maxRefreshTTL {
 		return fmt.Errorf("IDENTITY_REFRESH_TTL must be positive and at most 2160h")

@@ -110,6 +110,8 @@ func TestNewTokenManagerRejectsInvalidConfig(t *testing.T) {
 		{name: "missing audience", mutate: func(c *identity.TokenConfig) { c.Audience = "" }},
 		{name: "zero ttl", mutate: func(c *identity.TokenConfig) { c.AccessTTL = 0 }},
 		{name: "negative ttl", mutate: func(c *identity.TokenConfig) { c.AccessTTL = -time.Second }},
+		{name: "sub-second ttl", mutate: func(c *identity.TokenConfig) { c.AccessTTL = 500 * time.Millisecond }},
+		{name: "fractional-second ttl", mutate: func(c *identity.TokenConfig) { c.AccessTTL = 1500 * time.Millisecond }},
 	}
 
 	for _, tt := range tests {
@@ -120,6 +122,40 @@ func TestNewTokenManagerRejectsInvalidConfig(t *testing.T) {
 				t.Fatal("NewTokenManager() error = nil, want non-nil")
 			}
 		})
+	}
+}
+
+func TestTokenManagerAcceptsOneSecondTTLWithExactJWTExpiry(t *testing.T) {
+	manager, err := identity.NewTokenManager(identity.TokenConfig{
+		PrivateKey: testKey,
+		KeyID:      testKeyID,
+		Issuer:     testIssuer,
+		Audience:   testAudience,
+		AccessTTL:  time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewTokenManager() error = %v", err)
+	}
+	now := testNow.Add(750 * time.Millisecond)
+	raw, expiresAt, err := manager.IssueAccess(identity.Principal{
+		UserID:    uuid.New(),
+		SessionID: uuid.New(),
+	}, now)
+	if err != nil {
+		t.Fatalf("IssueAccess() error = %v", err)
+	}
+
+	parser := jwt.Parser{SkipClaimsValidation: true}
+	claims := jwt.MapClaims{}
+	if _, _, err := parser.ParseUnverified(raw, claims); err != nil {
+		t.Fatalf("ParseUnverified() error = %v", err)
+	}
+	jwtExpiresAt := time.Unix(int64(claims["exp"].(float64)), 0).UTC()
+	if !expiresAt.Equal(jwtExpiresAt) {
+		t.Fatalf("IssueAccess() expiresAt = %v, JWT exp = %v", expiresAt, jwtExpiresAt)
+	}
+	if want := now.Truncate(time.Second).Add(time.Second); !expiresAt.Equal(want) {
+		t.Fatalf("IssueAccess() expiresAt = %v, want %v", expiresAt, want)
 	}
 }
 

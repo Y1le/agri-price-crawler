@@ -57,8 +57,8 @@ func NewTokenManager(config TokenConfig) (*TokenManager, error) {
 	if config.Audience == "" {
 		return nil, errors.New("identity: token audience is required")
 	}
-	if config.AccessTTL <= 0 {
-		return nil, errors.New("identity: access token TTL must be positive")
+	if config.AccessTTL < time.Second || config.AccessTTL%time.Second != 0 {
+		return nil, errors.New("identity: access token TTL must be at least one whole second")
 	}
 
 	privateKey := ed25519.NewKeyFromSeed(config.PrivateKey.Seed())
