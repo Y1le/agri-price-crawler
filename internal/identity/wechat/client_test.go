@@ -71,6 +71,27 @@ func TestExchangeSendsExactRequestAndReturnsDurableIdentity(t *testing.T) {
 	}
 }
 
+func TestExchangeAcceptsExplicitZeroErrorCodeAndIgnoresUnknownFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte(`{
+			"errcode":0,
+			"openid":"` + testOpenID + `",
+			"unionid":"` + testUnionID + `",
+			"session_key":"` + testSessionKey + `",
+			"future_field":{"nested":true}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	got, err := newTestClient(t, server.URL, time.Second).Exchange(context.Background(), testCode)
+	if err != nil {
+		t.Fatalf("Exchange() error = %v", err)
+	}
+	if got != (identity.WeChatIdentity{AppID: testAppID, OpenID: testOpenID, UnionID: testUnionID}) {
+		t.Fatalf("Exchange() = %#v", got)
+	}
+}
+
 func TestExchangeMapsProviderErrors(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -155,6 +176,62 @@ func TestExchangeMapsHTTPAndTransportFailures(t *testing.T) {
 	})
 }
 
+func TestExchangeRejectsOtherHTTPStatusesBeforeParsingBody(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{
+			name:   "redirect with invalid-code provider body",
+			status: http.StatusFound,
+			body:   `{"errcode":40029,"errmsg":"` + testCode + `"}`,
+		},
+		{
+			name:   "bad request with malformed body",
+			status: http.StatusBadRequest,
+			body:   `{"openid":"` + testOpenID,
+		},
+		{
+			name:   "unauthorized with throttling provider body",
+			status: http.StatusUnauthorized,
+			body:   `{"errcode":45011,"errmsg":"` + testSessionKey + `"}`,
+		},
+		{
+			name:   "forbidden with invalid-code provider body",
+			status: http.StatusForbidden,
+			body:   `{"errcode":40029,"errmsg":"` + testOpenID + ` ` + testSessionKey + `"}`,
+		},
+		{
+			name:   "bad request with oversized body",
+			status: http.StatusBadRequest,
+			body:   strings.Repeat("provider-payload-marker", 4_000),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.WriteHeader(test.status)
+				_, _ = response.Write([]byte(test.body))
+			}))
+			t.Cleanup(server.Close)
+
+			_, err := newTestClient(t, server.URL, time.Second).Exchange(context.Background(), testCode)
+			if err == nil {
+				t.Fatal("Exchange() error = nil")
+			}
+			if errors.Is(err, identity.ErrCodeInvalid) {
+				t.Fatalf("HTTP %d must not be overridden by provider code classification: %v", test.status, err)
+			}
+			if errors.Is(err, identity.ErrUpstreamUnavailable) {
+				t.Fatalf("HTTP %d must remain a non-retryable rejection: %v", test.status, err)
+			}
+			assertSafeError(t, err, test.body)
+		})
+	}
+}
+
 func TestExchangeRejectsMalformedSuccessfulResponses(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -171,6 +248,46 @@ func TestExchangeRejectsMalformedSuccessfulResponses(t *testing.T) {
 		{
 			name:     "trailing JSON",
 			response: `{"openid":"` + testOpenID + `"}{"session_key":"` + testSessionKey + `"}`,
+		},
+		{
+			name:     "duplicate errcode",
+			response: `{"errcode":40029,"errcode":0,"openid":"` + testOpenID + `"}`,
+		},
+		{
+			name:     "duplicate openid",
+			response: `{"openid":"first-openid","openid":"` + testOpenID + `"}`,
+		},
+		{
+			name:     "duplicate unionid",
+			response: `{"openid":"` + testOpenID + `","unionid":"first-union","unionid":"` + testUnionID + `"}`,
+		},
+		{
+			name:     "null errcode",
+			response: `{"errcode":null,"openid":"` + testOpenID + `"}`,
+		},
+		{
+			name:     "string errcode",
+			response: `{"errcode":"0","openid":"` + testOpenID + `"}`,
+		},
+		{
+			name:     "fractional errcode",
+			response: `{"errcode":0.0,"openid":"` + testOpenID + `"}`,
+		},
+		{
+			name:     "numeric openid",
+			response: `{"openid":12345}`,
+		},
+		{
+			name:     "null openid",
+			response: `{"openid":null}`,
+		},
+		{
+			name:     "boolean unionid",
+			response: `{"openid":"` + testOpenID + `","unionid":true}`,
+		},
+		{
+			name:     "null unionid",
+			response: `{"openid":"` + testOpenID + `","unionid":null}`,
 		},
 		{
 			name:     "body over 64 KiB",

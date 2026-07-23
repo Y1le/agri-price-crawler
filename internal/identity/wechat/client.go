@@ -3,6 +3,7 @@
 package wechat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,8 +22,8 @@ const (
 )
 
 // Client is a constrained jscode2session client. It deliberately retains only
-// the provider credentials needed to make a request; session_key is decoded
-// into a request-local value and is never returned.
+// the provider credentials needed to make a request; session_key is ignored
+// without being decoded into a retained response field.
 type Client struct {
 	appID     string
 	appSecret string
@@ -113,24 +114,23 @@ func (client *Client) Exchange(ctx context.Context, code string) (identity.WeCha
 		}
 		return identity.WeChatIdentity{}, fmt.Errorf("wechat: read exchange response: %w", identity.ErrUpstreamUnavailable)
 	}
+	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= http.StatusInternalServerError {
+		return identity.WeChatIdentity{}, fmt.Errorf("wechat: provider temporarily unavailable: %w", identity.ErrUpstreamUnavailable)
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return identity.WeChatIdentity{}, fmt.Errorf("wechat: provider rejected exchange request")
+	}
 	if len(body) > maxResponseBytes {
 		return identity.WeChatIdentity{}, fmt.Errorf("wechat: exchange response exceeds limit: %w", identity.ErrUpstreamUnavailable)
 	}
 
-	if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= http.StatusInternalServerError {
-		return identity.WeChatIdentity{}, fmt.Errorf("wechat: provider temporarily unavailable: %w", identity.ErrUpstreamUnavailable)
-	}
-
-	var provider exchangeResponse
-	if err := json.Unmarshal(body, &provider); err != nil {
+	provider, err := parseExchangeResponse(body)
+	if err != nil {
 		return identity.WeChatIdentity{}, fmt.Errorf("wechat: malformed exchange response: %w", identity.ErrUpstreamUnavailable)
 	}
 
 	if provider.ErrCode != 0 {
 		return identity.WeChatIdentity{}, classifyProviderError(provider.ErrCode)
-	}
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return identity.WeChatIdentity{}, fmt.Errorf("wechat: provider rejected exchange request")
 	}
 	if provider.OpenID == "" {
 		return identity.WeChatIdentity{}, fmt.Errorf("wechat: exchange response missing identity: %w", identity.ErrUpstreamUnavailable)
@@ -141,6 +141,95 @@ func (client *Client) Exchange(ctx context.Context, code string) (identity.WeCha
 		OpenID:  provider.OpenID,
 		UnionID: provider.UnionID,
 	}, nil
+}
+
+func parseExchangeResponse(body []byte) (exchangeResponse, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return exchangeResponse{}, fmt.Errorf("expected top-level object")
+	}
+
+	var response exchangeResponse
+	seen := make(map[string]struct{}, 3)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return exchangeResponse{}, fmt.Errorf("read response field")
+		}
+		name, ok := token.(string)
+		if !ok {
+			return exchangeResponse{}, fmt.Errorf("invalid response field")
+		}
+
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return exchangeResponse{}, fmt.Errorf("decode response field")
+		}
+
+		switch name {
+		case "errcode":
+			if duplicateField(seen, name) {
+				return exchangeResponse{}, fmt.Errorf("duplicate recognized response field")
+			}
+			value, ok := strictInteger(raw)
+			if !ok {
+				return exchangeResponse{}, fmt.Errorf("invalid errcode field")
+			}
+			response.ErrCode = value
+		case "openid":
+			if duplicateField(seen, name) {
+				return exchangeResponse{}, fmt.Errorf("duplicate recognized response field")
+			}
+			value, ok := strictString(raw)
+			if !ok {
+				return exchangeResponse{}, fmt.Errorf("invalid openid field")
+			}
+			response.OpenID = value
+		case "unionid":
+			if duplicateField(seen, name) {
+				return exchangeResponse{}, fmt.Errorf("duplicate recognized response field")
+			}
+			value, ok := strictString(raw)
+			if !ok {
+				return exchangeResponse{}, fmt.Errorf("invalid unionid field")
+			}
+			response.UnionID = value
+		}
+	}
+
+	token, err = decoder.Token()
+	if err != nil || token != json.Delim('}') {
+		return exchangeResponse{}, fmt.Errorf("unterminated response object")
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return exchangeResponse{}, fmt.Errorf("trailing response data")
+	}
+	return response, nil
+}
+
+func duplicateField(seen map[string]struct{}, name string) bool {
+	if _, exists := seen[name]; exists {
+		return true
+	}
+	seen[name] = struct{}{}
+	return false
+}
+
+func strictInteger(raw json.RawMessage) (int, bool) {
+	var value *int
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		return 0, false
+	}
+	return *value, true
+}
+
+func strictString(raw json.RawMessage) (string, bool) {
+	var value *string
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		return "", false
+	}
+	return *value, true
 }
 
 func classifyProviderError(code int) error {
