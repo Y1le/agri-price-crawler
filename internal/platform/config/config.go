@@ -14,6 +14,7 @@ type Config struct {
 	Postgres    Postgres
 	Redis       Redis
 	Worker      Worker
+	Identity    Identity
 }
 
 type Gateway struct {
@@ -43,6 +44,8 @@ func Load() (Config, error) {
 	if databaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
+
+	environment := stringEnv("APP_ENV", "development")
 
 	redisDB, err := intEnv("REDIS_DB", 0)
 	if err != nil {
@@ -75,8 +78,13 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("WORKER_BATCH_SIZE must be between 1 and 100")
 	}
 
+	identity, err := loadIdentity(environment)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
-		Environment: stringEnv("APP_ENV", "development"),
+		Environment: environment,
 		Gateway:     Gateway{Addr: stringEnv("GATEWAY_ADDR", ":8080")},
 		Postgres:    Postgres{URL: databaseURL},
 		Redis: Redis{
@@ -85,7 +93,8 @@ func Load() (Config, error) {
 			Password: os.Getenv("REDIS_PASSWORD"),
 			DB:       redisDB,
 		},
-		Worker: Worker{PollInterval: pollInterval, BatchSize: batchSize, LeaseDuration: leaseDuration},
+		Worker:   Worker{PollInterval: pollInterval, BatchSize: batchSize, LeaseDuration: leaseDuration},
+		Identity: identity,
 	}, nil
 }
 
@@ -118,6 +127,19 @@ func durationEnv(name string, defaultValue time.Duration) (time.Duration, error)
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", name, err)
+	}
+	return parsed, nil
+}
+
+func boolEnv(name string, defaultValue bool) (bool, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return defaultValue, nil
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", name, err)
 	}
 	return parsed, nil
 }

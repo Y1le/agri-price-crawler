@@ -1,6 +1,9 @@
 package config_test
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -8,7 +11,57 @@ import (
 	"github.com/Y1le/agri-price-crawler/internal/platform/config"
 )
 
+func clearIdentityEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"IDENTITY_JWT_PRIVATE_KEY_BASE64",
+		"IDENTITY_JWT_KEY_ID",
+		"IDENTITY_JWT_ISSUER",
+		"IDENTITY_JWT_AUDIENCE",
+		"IDENTITY_JWT_ACCESS_TTL",
+		"IDENTITY_REFRESH_TTL",
+		"IDENTITY_REFRESH_REUSE_GRACE",
+		"IDENTITY_ENABLED_CLIENTS",
+		"IDENTITY_OTP_PEPPER_BASE64",
+		"IDENTITY_OTP_TTL",
+		"IDENTITY_OTP_ATTEMPTS",
+		"IDENTITY_OTP_COOLDOWN",
+		"IDENTITY_OTP_EMAIL_PER_HOUR",
+		"IDENTITY_OTP_IP_PER_HOUR",
+		"IDENTITY_WECHAT_APP_ID",
+		"IDENTITY_WECHAT_APP_SECRET",
+		"IDENTITY_WECHAT_BASE_URL",
+		"IDENTITY_WECHAT_TIMEOUT",
+		"IDENTITY_WECHAT_IP_PER_HOUR",
+		"IDENTITY_EMAIL_DRIVER",
+		"IDENTITY_SMTP_HOST",
+		"IDENTITY_SMTP_PORT",
+		"IDENTITY_SMTP_USERNAME",
+		"IDENTITY_SMTP_PASSWORD",
+		"IDENTITY_SMTP_FROM",
+		"IDENTITY_SMTP_TLS_MODE",
+		"IDENTITY_SMTP_TIMEOUT",
+		"IDENTITY_COOKIE_NAME",
+		"IDENTITY_COOKIE_SECURE",
+		"IDENTITY_WEB_ALLOWED_ORIGINS",
+		"IDENTITY_TRUSTED_PROXIES",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
+func setValidIdentityEnv(t *testing.T) {
+	t.Helper()
+	clearIdentityEnv(t)
+	t.Setenv("IDENTITY_JWT_PRIVATE_KEY_BASE64", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, ed25519.SeedSize)))
+	t.Setenv("IDENTITY_OTP_PEPPER_BASE64", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)))
+	t.Setenv("IDENTITY_WECHAT_APP_ID", "wx-test")
+	t.Setenv("IDENTITY_WECHAT_APP_SECRET", "secret-test")
+	t.Setenv("IDENTITY_EMAIL_DRIVER", "memory")
+}
+
 func TestLoadDefaults(t *testing.T) {
+	clearIdentityEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://agri:agri@localhost:5432/agri?sslmode=disable")
 	got, err := config.Load()
 	if err != nil {
@@ -28,6 +81,7 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadRejectsNonPositiveWorkerJobLeaseDuration(t *testing.T) {
 	for _, value := range []string{"0s", "-1s"} {
 		t.Run(value, func(t *testing.T) {
+			clearIdentityEnv(t)
 			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
 			t.Setenv("WORKER_JOB_LEASE_DURATION", value)
 
@@ -43,6 +97,7 @@ func TestLoadRejectsNonPositiveWorkerJobLeaseDuration(t *testing.T) {
 }
 
 func TestLoadRejectsMissingDatabaseURL(t *testing.T) {
+	clearIdentityEnv(t)
 	t.Setenv("DATABASE_URL", "")
 	if _, err := config.Load(); err == nil {
 		t.Fatal("want error")
@@ -50,6 +105,7 @@ func TestLoadRejectsMissingDatabaseURL(t *testing.T) {
 }
 
 func TestLoadRejectsInvalidWorkerValues(t *testing.T) {
+	clearIdentityEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
 	t.Setenv("WORKER_POLL_INTERVAL", "bad")
 	if _, err := config.Load(); err == nil {
@@ -65,6 +121,7 @@ func TestLoadRejectsInvalidWorkerValues(t *testing.T) {
 func TestLoadRejectsNonPositiveWorkerPollInterval(t *testing.T) {
 	for _, value := range []string{"0s", "-1s"} {
 		t.Run(value, func(t *testing.T) {
+			clearIdentityEnv(t)
 			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
 			t.Setenv("WORKER_POLL_INTERVAL", value)
 
@@ -77,4 +134,260 @@ func TestLoadRejectsNonPositiveWorkerPollInterval(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadIdentityDefaults(t *testing.T) {
+	setValidIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Identity.JWT.PrivateKey) != ed25519.PrivateKeySize {
+		t.Fatalf("private key length = %d, want %d", len(got.Identity.JWT.PrivateKey), ed25519.PrivateKeySize)
+	}
+	if got.Identity.JWT.KeyID != "identity-v1" ||
+		got.Identity.JWT.Issuer != "agri-price-crawler" ||
+		got.Identity.JWT.Audience != "agri-clients" ||
+		got.Identity.JWT.AccessTTL != 15*time.Minute {
+		t.Fatalf("JWT defaults do not match the documented non-secret values")
+	}
+	if got.Identity.RefreshTTL != 720*time.Hour || got.Identity.ReuseGrace != 10*time.Second {
+		t.Fatalf("refresh defaults = ttl %v grace %v", got.Identity.RefreshTTL, got.Identity.ReuseGrace)
+	}
+	if strings.Join(got.Identity.EnabledClients, ",") != "web,wechat_mini" {
+		t.Fatalf("enabled clients = %v", got.Identity.EnabledClients)
+	}
+	if len(got.Identity.OTP.Pepper) != 32 ||
+		got.Identity.OTP.TTL != 10*time.Minute ||
+		got.Identity.OTP.Attempts != 5 ||
+		got.Identity.OTP.Cooldown != time.Minute ||
+		got.Identity.OTP.EmailPerHour != 5 ||
+		got.Identity.OTP.IPPerHour != 30 {
+		t.Fatalf("OTP defaults do not match the documented non-secret values")
+	}
+	if got.Identity.WeChat.BaseURL != "https://api.weixin.qq.com" ||
+		got.Identity.WeChat.Timeout != 5*time.Second ||
+		got.Identity.WeChat.IPPerHour != 60 {
+		t.Fatalf("WeChat defaults = %+v", got.Identity.WeChat)
+	}
+	if got.Identity.SMTP.Timeout != 5*time.Second {
+		t.Fatalf("SMTP timeout = %v", got.Identity.SMTP.Timeout)
+	}
+	if got.Identity.Web.CookieName != "agri_refresh" || got.Identity.Web.CookieSecure {
+		t.Fatalf("development Web defaults = %+v", got.Identity.Web)
+	}
+	if err := got.ValidateGateway(); err != nil {
+		t.Fatalf("ValidateGateway() error = %v", err)
+	}
+}
+
+func TestLoadIdentityProductionDefaults(t *testing.T) {
+	setValidIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+	t.Setenv("APP_ENV", "production")
+	setValidSMTPEnv(t)
+	t.Setenv("IDENTITY_WEB_ALLOWED_ORIGINS", "https://app.example.com")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Identity.Web.CookieName != "__Secure-agri_refresh" || !got.Identity.Web.CookieSecure {
+		t.Fatalf("production Web defaults = %+v", got.Identity.Web)
+	}
+	if err := got.ValidateGateway(); err != nil {
+		t.Fatalf("ValidateGateway() error = %v", err)
+	}
+}
+
+func TestLoadWithoutGatewayIdentityCredentials(t *testing.T) {
+	clearIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() blocked Worker or Migrate: %v", err)
+	}
+	if len(got.Identity.JWT.PrivateKey) != 0 || len(got.Identity.OTP.Pepper) != 0 {
+		t.Fatal("missing credentials were synthesized")
+	}
+	if err := got.ValidateGateway(); err == nil {
+		t.Fatal("ValidateGateway() succeeded without Gateway Identity credentials")
+	}
+}
+
+func TestIdentityGatewayValidationRejectsMissingCredentials(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		message string
+	}{
+		{name: "JWT signing seed", env: "IDENTITY_JWT_PRIVATE_KEY_BASE64", message: "IDENTITY_JWT_PRIVATE_KEY_BASE64"},
+		{name: "OTP Pepper", env: "IDENTITY_OTP_PEPPER_BASE64", message: "IDENTITY_OTP_PEPPER_BASE64"},
+		{name: "WeChat AppID", env: "IDENTITY_WECHAT_APP_ID", message: "IDENTITY_WECHAT_APP_ID"},
+		{name: "WeChat AppSecret", env: "IDENTITY_WECHAT_APP_SECRET", message: "IDENTITY_WECHAT_APP_SECRET"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv(tt.env, "")
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			err = got.ValidateGateway()
+			if err == nil || !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("ValidateGateway() error = %v, want field %s", err, tt.message)
+			}
+		})
+	}
+}
+
+func TestIdentityGatewayValidationRejectsInvalidProductionSecurity(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		value   string
+		message string
+	}{
+		{name: "insecure Cookie", env: "IDENTITY_COOKIE_SECURE", value: "false", message: "IDENTITY_COOKIE_SECURE"},
+		{name: "Cookie without secure prefix", env: "IDENTITY_COOKIE_NAME", value: "agri_refresh", message: "IDENTITY_COOKIE_NAME"},
+		{name: "missing origin", env: "IDENTITY_WEB_ALLOWED_ORIGINS", value: "", message: "IDENTITY_WEB_ALLOWED_ORIGINS"},
+		{name: "wildcard origin", env: "IDENTITY_WEB_ALLOWED_ORIGINS", value: "*", message: "IDENTITY_WEB_ALLOWED_ORIGINS"},
+		{name: "origin with path", env: "IDENTITY_WEB_ALLOWED_ORIGINS", value: "https://app.example.com/", message: "IDENTITY_WEB_ALLOWED_ORIGINS"},
+		{name: "memory email", env: "IDENTITY_EMAIL_DRIVER", value: "memory", message: "IDENTITY_EMAIL_DRIVER"},
+		{name: "plaintext SMTP", env: "IDENTITY_SMTP_TLS_MODE", value: "none", message: "IDENTITY_SMTP_TLS_MODE"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv("APP_ENV", "production")
+			setValidSMTPEnv(t)
+			t.Setenv("IDENTITY_WEB_ALLOWED_ORIGINS", "https://app.example.com")
+			t.Setenv(tt.env, tt.value)
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			err = got.ValidateGateway()
+			if err == nil || !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("ValidateGateway() error = %v, want field %s", err, tt.message)
+			}
+		})
+	}
+}
+
+func TestIdentityGatewayValidationSMTP(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		value   string
+		message string
+	}{
+		{name: "host", env: "IDENTITY_SMTP_HOST", value: "", message: "IDENTITY_SMTP_HOST"},
+		{name: "port", env: "IDENTITY_SMTP_PORT", value: "0", message: "IDENTITY_SMTP_PORT"},
+		{name: "username", env: "IDENTITY_SMTP_USERNAME", value: "", message: "IDENTITY_SMTP_USERNAME"},
+		{name: "password", env: "IDENTITY_SMTP_PASSWORD", value: "", message: "IDENTITY_SMTP_PASSWORD"},
+		{name: "from", env: "IDENTITY_SMTP_FROM", value: "", message: "IDENTITY_SMTP_FROM"},
+		{name: "TLS mode", env: "IDENTITY_SMTP_TLS_MODE", value: "opportunistic", message: "IDENTITY_SMTP_TLS_MODE"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			setValidSMTPEnv(t)
+			t.Setenv(tt.env, tt.value)
+
+			got, err := config.Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			err = got.ValidateGateway()
+			if err == nil || !strings.Contains(err.Error(), tt.message) {
+				t.Fatalf("ValidateGateway() error = %v, want field %s", err, tt.message)
+			}
+		})
+	}
+}
+
+func TestIdentityGatewayValidationAllowsDevelopmentPlaintextSMTP(t *testing.T) {
+	setValidIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+	setValidSMTPEnv(t)
+	t.Setenv("IDENTITY_SMTP_TLS_MODE", "none")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := got.ValidateGateway(); err != nil {
+		t.Fatalf("ValidateGateway() error = %v", err)
+	}
+}
+
+func TestIdentityGatewayValidationRejectsFutureAppClient(t *testing.T) {
+	setValidIdentityEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+	t.Setenv("IDENTITY_ENABLED_CLIENTS", "web,app")
+
+	got, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = got.ValidateGateway()
+	if err == nil || !strings.Contains(err.Error(), "IDENTITY_ENABLED_CLIENTS") {
+		t.Fatalf("ValidateGateway() error = %v", err)
+	}
+}
+
+func TestLoadIdentityRejectsMalformedValuesWithoutLeakingSecrets(t *testing.T) {
+	tests := []struct {
+		name   string
+		env    string
+		secret string
+	}{
+		{name: "Pepper base64", env: "IDENTITY_OTP_PEPPER_BASE64", secret: "not-base64-pepper"},
+		{name: "JWT seed base64", env: "IDENTITY_JWT_PRIVATE_KEY_BASE64", secret: "not-base64-seed"},
+		{name: "JWT seed length", env: "IDENTITY_JWT_PRIVATE_KEY_BASE64", secret: base64.StdEncoding.EncodeToString([]byte("short-secret"))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setValidIdentityEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://localhost/agri")
+			t.Setenv(tt.env, tt.secret)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatal("Load() succeeded with malformed secret")
+			}
+			if !strings.Contains(err.Error(), tt.env) {
+				t.Fatalf("error = %q, want variable name", err)
+			}
+			if strings.Contains(err.Error(), tt.secret) {
+				t.Fatalf("error leaked secret: %q", err)
+			}
+		})
+	}
+}
+
+func setValidSMTPEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("IDENTITY_EMAIL_DRIVER", "smtp")
+	t.Setenv("IDENTITY_SMTP_HOST", "smtp.example.com")
+	t.Setenv("IDENTITY_SMTP_PORT", "587")
+	t.Setenv("IDENTITY_SMTP_USERNAME", "mailer")
+	t.Setenv("IDENTITY_SMTP_PASSWORD", "smtp-secret")
+	t.Setenv("IDENTITY_SMTP_FROM", "noreply@example.com")
+	t.Setenv("IDENTITY_SMTP_TLS_MODE", "starttls")
 }
