@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Y1le/agri-price-crawler/internal/identity"
 	"github.com/Y1le/agri-price-crawler/internal/platform/httpx"
@@ -130,7 +131,55 @@ type weChatLoginRequest struct {
 }
 
 type refreshRequest struct {
-	RefreshToken string `json:"refresh_token,omitempty"`
+	RefreshToken        string
+	RefreshTokenPresent bool
+	RefreshTokenString  bool
+}
+
+func (request *refreshRequest) UnmarshalJSON(data []byte) error {
+	request.RefreshToken = ""
+	request.RefreshTokenPresent = false
+	request.RefreshTokenString = false
+
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return errors.New("refresh request must be a JSON object")
+	}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return errors.New("decode refresh request field")
+		}
+		name, ok := token.(string)
+		if !ok || name != "refresh_token" {
+			return errors.New("refresh request contains an unknown field")
+		}
+		if request.RefreshTokenPresent {
+			return errors.New("refresh request contains duplicate refresh_token fields")
+		}
+		request.RefreshTokenPresent = true
+
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return errors.New("decode refresh_token")
+		}
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			continue
+		}
+		if err := json.Unmarshal(raw, &request.RefreshToken); err != nil {
+			return errors.New("refresh_token must be a string")
+		}
+		request.RefreshTokenString = true
+	}
+	token, err = decoder.Token()
+	if err != nil || token != json.Delim('}') {
+		return errors.New("refresh request has an invalid closing delimiter")
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("refresh request contains trailing data")
+	}
+	return nil
 }
 
 type bindEmailRequest struct {
@@ -207,6 +256,10 @@ func (h *handler) emailLogin(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, errorContextEmailProof, err)
 		return
 	}
+	if result.Client != request.ClientKind {
+		h.writeError(w, r, errorContextDefault, identity.ErrStateUnavailable)
+		return
+	}
 	h.writeLogin(w, r, result, accountFromUser(result.User))
 }
 
@@ -216,7 +269,7 @@ func (h *handler) wechatLogin(w http.ResponseWriter, r *http.Request) {
 		h.writeDecodeError(w, r, err)
 		return
 	}
-	if request.Code == "" || request.ClientKind.Validate() != nil {
+	if !validWeChatCode(request.Code) || request.ClientKind.Validate() != nil {
 		h.writeError(w, r, errorContextWeChatProof, identity.ErrInvalidRequest)
 		return
 	}
@@ -230,6 +283,10 @@ func (h *handler) wechatLogin(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, errorContextWeChatProof, err)
 		return
 	}
+	if result.Client != request.ClientKind {
+		h.writeError(w, r, errorContextDefault, identity.ErrStateUnavailable)
+		return
+	}
 	h.writeLogin(w, r, result, accountFromUser(result.User))
 }
 
@@ -240,9 +297,13 @@ func (h *handler) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cookieToken, cookieCount := namedCookie(r, h.cookie.Name)
-	jsonPresent := request.RefreshToken != ""
+	jsonPresent := request.RefreshTokenPresent
 	if cookieCount > 1 || (cookieCount == 1 && cookieToken == "") ||
 		(cookieCount == 1) == jsonPresent {
+		h.writeError(w, r, errorContextRefresh, identity.ErrInvalidRequest)
+		return
+	}
+	if cookieCount == 0 && (!request.RefreshTokenString || request.RefreshToken == "") {
 		h.writeError(w, r, errorContextRefresh, identity.ErrInvalidRequest)
 		return
 	}
@@ -280,7 +341,7 @@ func (h *handler) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.clearRefreshCookie(w)
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, acceptedResponse{Status: "ok"})
 }
 
 func (h *handler) logoutAll(w http.ResponseWriter, r *http.Request) {
@@ -294,7 +355,7 @@ func (h *handler) logoutAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.clearRefreshCookie(w)
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, acceptedResponse{Status: "ok"})
 }
 
 func (h *handler) requestBindEmailCode(w http.ResponseWriter, r *http.Request) {
@@ -346,7 +407,7 @@ func (h *handler) bindWeChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal, err := principalFromContext(r.Context())
-	if err != nil || request.Code == "" {
+	if err != nil || !validWeChatCode(request.Code) {
 		h.writeError(w, r, errorContextWeChatProof, identity.ErrInvalidRequest)
 		return
 	}
@@ -438,6 +499,10 @@ func accountFromSummary(summary identity.AccountSummary) accountResponse {
 		ID: summary.User.ID, Status: summary.User.Status,
 		CreatedAt: summary.User.CreatedAt.UTC(), Identities: identities,
 	}
+}
+
+func validWeChatCode(code string) bool {
+	return code != "" && utf8.ValidString(code) && utf8.RuneCountInString(code) <= 256
 }
 
 func decodeJSON(r *http.Request, target any) error {

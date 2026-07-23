@@ -144,8 +144,8 @@ func TestExactTenRoutesAndMethodIsolation(t *testing.T) {
 		{http.MethodPost, "/api/v1/auth/email/login", `{"email":"a@example.test","code":"123456","client_kind":"wechat_mini"}`, http.StatusOK},
 		{http.MethodPost, "/api/v1/auth/wechat/login", `{"code":"wx","client_kind":"wechat_mini"}`, http.StatusOK},
 		{http.MethodPost, "/api/v1/auth/refresh", `{"refresh_token":"mini-token"}`, http.StatusOK},
-		{http.MethodPost, "/api/v1/auth/logout", "", http.StatusNoContent},
-		{http.MethodPost, "/api/v1/auth/logout-all", "", http.StatusNoContent},
+		{http.MethodPost, "/api/v1/auth/logout", "", http.StatusOK},
+		{http.MethodPost, "/api/v1/auth/logout-all", "", http.StatusOK},
 		{http.MethodPost, "/api/v1/auth/bind/email/code", `{"email":"a@example.test"}`, http.StatusAccepted},
 		{http.MethodPost, "/api/v1/auth/bind/email", `{"email":"a@example.test","code":"123456"}`, http.StatusOK},
 		{http.MethodPost, "/api/v1/auth/bind/wechat", `{"code":"wx"}`, http.StatusOK},
@@ -304,6 +304,78 @@ func TestLoginAndRefreshUseClientSpecificTransport(t *testing.T) {
 	require.Equal(t, http.StatusOK, miniRefreshResponse.Code)
 }
 
+func TestLoginRejectsServiceClientMismatchBeforeWritingCredentials(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 23, 5, 4, 3, 500_000_000, time.UTC)
+	tests := []struct {
+		name      string
+		path      string
+		body      string
+		configure func(*fakeService)
+	}{
+		{
+			name: "email requested web but returned mini",
+			path: "/api/v1/auth/email/login",
+			body: `{"email":"a@example.test","code":"123456","client_kind":"web"}`,
+			configure: func(service *fakeService) {
+				service.loginEmail = func(context.Context, string, string, identity.ClientKind) (identity.LoginResult, error) {
+					return loginResult(identity.ClientWeChatMini, now), nil
+				}
+			},
+		},
+		{
+			name: "WeChat requested mini but returned web",
+			path: "/api/v1/auth/wechat/login",
+			body: `{"code":"wx","client_kind":"wechat_mini"}`,
+			configure: func(service *fakeService) {
+				service.loginWeChat = func(context.Context, string, string, identity.ClientKind) (identity.LoginResult, error) {
+					return loginResult(identity.ClientWeb, now), nil
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			service := &fakeService{}
+			test.configure(service)
+			handler := testHandler(t, Config{
+				Service: service, TokenParser: allowTokenParser(),
+				Clock: fixedClock{now},
+			})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, jsonRequest(http.MethodPost, test.path, test.body))
+			requireProblem(t, response, http.StatusServiceUnavailable, "service_not_ready")
+			require.Empty(t, response.Header().Values("Set-Cookie"))
+			require.NotContains(t, response.Body.String(), "access-token")
+			require.NotContains(t, response.Body.String(), "refresh-token")
+		})
+	}
+}
+
+func TestLoginExpiresInCeilsNormalFractionalRemainingLifetime(t *testing.T) {
+	t.Parallel()
+
+	issuedAt := time.Date(2026, 7, 23, 5, 4, 3, 0, time.UTC)
+	handledAt := issuedAt.Add(500 * time.Millisecond)
+	service := &fakeService{loginEmail: func(context.Context, string, string, identity.ClientKind) (identity.LoginResult, error) {
+		return loginResult(identity.ClientWeChatMini, issuedAt), nil
+	}}
+	handler := testHandler(t, Config{
+		Service: service, TokenParser: allowTokenParser(), Clock: fixedClock{handledAt},
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, jsonRequest(
+		http.MethodPost,
+		"/api/v1/auth/email/login",
+		`{"email":"a@example.test","code":"123456","client_kind":"wechat_mini"}`,
+	))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), `"expires_in":900`)
+}
+
 func TestRefreshRejectsAmbiguousMissingDuplicateAndMismatchedTransport(t *testing.T) {
 	t.Parallel()
 	service := &fakeService{refresh: func(_ context.Context, _ string, client identity.ClientKind) (identity.LoginResult, error) {
@@ -320,6 +392,11 @@ func TestRefreshRejectsAmbiguousMissingDuplicateAndMismatchedTransport(t *testin
 	}{
 		{name: "neither", body: `{}`},
 		{name: "both", body: `{"refresh_token":"mini"}`, cookies: []*http.Cookie{{Name: "agri_refresh", Value: "web"}}},
+		{name: "cookie plus empty JSON field", body: `{"refresh_token":""}`, cookies: []*http.Cookie{{Name: "agri_refresh", Value: "web"}}},
+		{name: "cookie plus null JSON field", body: `{"refresh_token":null}`, cookies: []*http.Cookie{{Name: "agri_refresh", Value: "web"}}},
+		{name: "empty JSON field alone", body: `{"refresh_token":""}`},
+		{name: "null JSON field alone", body: `{"refresh_token":null}`},
+		{name: "duplicate JSON field", body: `{"refresh_token":"first","refresh_token":"second"}`},
 		{name: "duplicate cookies", body: `{}`, cookies: []*http.Cookie{{Name: "agri_refresh", Value: "a"}, {Name: "agri_refresh", Value: "b"}}},
 		{name: "empty cookie", body: `{}`, cookies: []*http.Cookie{{Name: "agri_refresh", Value: ""}}},
 		{name: "durable client mismatch", body: `{"refresh_token":"mini"}`},
@@ -360,13 +437,75 @@ func TestCookieOriginGuardAndLogoutClearing(t *testing.T) {
 	logout := bearerRequest(http.MethodPost, "/api/v1/auth/logout", "")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, logout)
-	require.Equal(t, http.StatusNoContent, response.Code)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.JSONEq(t, `{"status":"ok"}`, response.Body.String())
 	cookies := response.Result().Cookies()
 	require.Len(t, cookies, 1)
 	require.Equal(t, -1, cookies[0].MaxAge)
 	require.True(t, cookies[0].HttpOnly)
 	require.Equal(t, http.SameSiteLaxMode, cookies[0].SameSite)
 	require.Equal(t, "/api/v1/auth", cookies[0].Path)
+}
+
+func TestLogoutAllReturnsStableSuccessJSON(t *testing.T) {
+	t.Parallel()
+	handler := testHandler(t, Config{Service: &fakeService{}, TokenParser: allowTokenParser()})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, bearerRequest(http.MethodPost, "/api/v1/auth/logout-all", ""))
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, "application/json", response.Header().Get("Content-Type"))
+	require.JSONEq(t, `{"status":"ok"}`, response.Body.String())
+}
+
+func TestWeChatCodeRejectsMoreThan256CharactersBeforeService(t *testing.T) {
+	t.Parallel()
+	service := &fakeService{}
+	handler := testHandler(t, Config{Service: service, TokenParser: allowTokenParser()})
+	oversized := strings.Repeat("x", 257)
+
+	tests := []struct {
+		path string
+		body string
+		call string
+	}{
+		{"/api/v1/auth/wechat/login", `{"code":"` + oversized + `","client_kind":"wechat_mini"}`, "wechat_login"},
+		{"/api/v1/auth/bind/wechat", `{"code":"` + oversized + `"}`, "bind_wechat"},
+	}
+	for _, test := range tests {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, bearerRequest(http.MethodPost, test.path, test.body))
+		requireProblem(t, response, http.StatusBadRequest, "invalid_request")
+		require.Zero(t, service.calls[test.call])
+	}
+}
+
+func TestWeChatCodeAccepts256UnicodeCodePoints(t *testing.T) {
+	t.Parallel()
+	service := &fakeService{}
+	handler := testHandler(t, Config{Service: service, TokenParser: allowTokenParser()})
+	code := strings.Repeat("验", 256)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, jsonRequest(
+		http.MethodPost,
+		"/api/v1/auth/wechat/login",
+		`{"code":"`+code+`","client_kind":"wechat_mini"}`,
+	))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, 1, service.calls["wechat_login"])
+}
+
+func TestAccessExpiresInCeilsPositiveFractionAndRejectsUnsafeBounds(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 23, 5, 4, 3, 500_000_000, time.UTC)
+
+	got, err := accessExpiresIn(now, now.Add(899*time.Second+500*time.Millisecond))
+	require.NoError(t, err)
+	require.Equal(t, int64(900), got)
+
+	_, err = accessExpiresIn(now, now)
+	require.Error(t, err)
+	_, err = accessExpiresIn(now, now.Add((time.Duration(1)<<31)*time.Second))
+	require.Error(t, err)
 }
 
 func TestBindMergeUsesSessionTransportAndNonMergeReturnsAccountOnly(t *testing.T) {
