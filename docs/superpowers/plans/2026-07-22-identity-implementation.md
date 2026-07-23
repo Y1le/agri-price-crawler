@@ -800,8 +800,10 @@ transaction, first perform an unlocked token lookup only to discover its
 `SessionID`; never lock a refresh-token row before its session. Lock the
 session row, then re-read the token with `FOR UPDATE` and verify that it still
 belongs to the locked session before validating or mutating either row. This
-session-then-token order must match logout and logout-all; repository bulk
-revocation locks session rows in UUID order and then token rows in UUID order.
+session-then-token order must match single-device logout. Any path that may
+bulk-revoke sessions must first lock every owning user row in UUID order,
+without pre-locking one device session, and only then lock session rows in UUID
+order followed by token rows in UUID order.
 Require `session.Client == client`, reject expired/revoked state, and handle
 consumed tokens as follows: within `ReuseGrace` return `ErrTokenInvalid`
 without mutation; outside the grace revoke the session with reason
@@ -813,7 +815,16 @@ credentials with `LoginResult.Client` copied from the durable session.
 
 - [ ] **Step 5: Add logout and current-user behavior**
 
-`Logout` revokes only `Principal.SessionID` with reason `logout` and treats an already-revoked session as idempotent success. `LogoutAll` first locks and validates the principal session, then revokes all user sessions with reason `logout_all`. `Me` reads the user summary and converts merged or disabled users to stable public errors. Mask email identities as the first Unicode character plus `***@domain`, use `***@domain` for an empty local part after validation, and expose WeChat only as `已绑定微信`; never copy OpenID or UnionID into `AccountSummary`.
+`Logout` revokes only `Principal.SessionID` with reason `logout` and treats an
+already-revoked session as idempotent success. `LogoutAll` must lock and
+validate `Principal.UserID` before taking any session lock, then lock and
+validate the principal session belongs to that user, and finally call
+`RevokeUserSessions` with reason `logout_all`. It must never pre-lock the
+principal device session before the shared user row. `Me` reads the user
+summary and converts merged or disabled users to stable public errors. Mask
+email identities as the first Unicode character plus `***@domain`, use
+`***@domain` for an empty local part after validation, and expose WeChat only
+as `已绑定微信`; never copy OpenID or UnionID into `AccountSummary`.
 
 - [ ] **Step 6: Run tests and commit**
 
@@ -895,7 +906,26 @@ Expected: FAIL because binding methods do not exist.
 
 - [ ] **Step 4: Add deterministic atomic merge**
 
-If the identity is unowned, attach it to the current user and return `BindResult{Account: summary}`. If it belongs to the current user, return the same shape without creating a new session. Otherwise load the principal's active session to retain its `Client` value, lock both users in UUID order, then choose primary by `created_at` and UUID tie-break. Call merge participants in registration order with `tx.SQL()`, reassign identities, call `MarkUserMerged`, record the merge, revoke every old session for both users, and create one new session for the retained current client. Before the transaction callback returns, call `tx.ListIdentities` for the primary user and construct the complete `AccountSummary`; do not defer this to a post-commit `Repository.UserSummary` read that could fail after the merge is durable. A successful merge returns the new credentials in `BindResult.Session`; non-merge binding leaves `Session` nil.
+If the identity is unowned, attach it to the current user and return
+`BindResult{Account: summary}`. If it belongs to the current user, return the
+same shape without creating a new session. For a possible cross-account merge,
+first perform an unlocked identity lookup only to discover the other user ID;
+do not lock the target identity or principal session yet. Lock both user rows
+in UUID order, then lock and re-read the target identity and the principal
+session. Revalidate that identity ownership is unchanged, that the principal
+session still belongs to the current user and is active, and that neither
+account is merged or disabled. Only after those checks choose the primary by
+`created_at` and UUID tie-break. Call merge participants in registration order
+with `tx.SQL()`, reassign identities, call `MarkUserMerged`, record the merge,
+revoke every old session for both users, and create one new session for the
+retained current client. All owning user rows are already locked before
+`RevokeUserSessions`; no merge path may take an identity or session lock before
+those ordered user locks. Before the transaction callback returns, call
+`tx.ListIdentities` for the primary user and construct the complete
+`AccountSummary`; do not defer this to a post-commit `Repository.UserSummary`
+read that could fail after the merge is durable. A successful merge returns
+the new credentials in `BindResult.Session`; non-merge binding leaves
+`Session` nil.
 
 - [ ] **Step 5: Protect failure behavior**
 

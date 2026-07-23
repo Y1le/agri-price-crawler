@@ -444,6 +444,13 @@ func (t *transaction) RevokeUserSessions(
 	revokedAt time.Time,
 	reason string,
 ) error {
+	// The owning user is the common serialization point for every bulk
+	// revocation path. Deliberately do not validate status here: application
+	// workflows retain responsibility for active/merged/disabled semantics.
+	if _, err := t.FindUser(ctx, userID, true); err != nil {
+		return err
+	}
+
 	const lockSessions = `
 		SELECT id
 		FROM identity_sessions
@@ -776,7 +783,10 @@ func mapDatabaseError(operation string, err error) error {
 		switch {
 		case postgresError.Code == "23505":
 			return fmt.Errorf("%s: %w", operation, identity.ErrConflict)
-		case strings.HasPrefix(postgresError.Code, "08"), postgresError.Code == "57014":
+		case strings.HasPrefix(postgresError.Code, "08"),
+			postgresError.Code == "40001",
+			postgresError.Code == "40P01",
+			postgresError.Code == "57014":
 			return fmt.Errorf("%s: %w", operation, identity.ErrStateUnavailable)
 		}
 	}

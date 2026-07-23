@@ -1,6 +1,7 @@
 package postgres_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -281,6 +282,43 @@ func TestRepositoryMapsDatabaseErrorsReturnedByCallback(t *testing.T) {
 	}
 }
 
+func TestRepositoryMapsDeadlockAndSerializationSQLStates(t *testing.T) {
+	ctx, _, repository := setupRepository(t)
+	for _, test := range []struct {
+		name  string
+		query string
+	}{
+		{
+			name: "deadlock",
+			query: `
+				DO $$
+				BEGIN
+					RAISE EXCEPTION 'forced deadlock' USING ERRCODE = '40P01';
+				END
+				$$`,
+		},
+		{
+			name: "serialization",
+			query: `
+				DO $$
+				BEGIN
+					RAISE EXCEPTION 'forced serialization failure' USING ERRCODE = '40001';
+				END
+				$$`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := repository.WithinTx(ctx, func(tx identity.Tx) error {
+				_, err := tx.SQL().Exec(ctx, test.query)
+				return err
+			})
+			if !errors.Is(err, identity.ErrStateUnavailable) {
+				t.Fatalf("SQLSTATE mapping error = %v, want ErrStateUnavailable", err)
+			}
+		})
+	}
+}
+
 func TestRepositoryUserSummaryUsesOneRepeatableSnapshot(t *testing.T) {
 	ctx, pool, repository := setupRepository(t)
 	now := time.Date(2026, time.July, 23, 9, 45, 0, 0, time.UTC)
@@ -522,6 +560,56 @@ func TestRepositoryRevokeUserSessionsAlsoRevokesTokens(t *testing.T) {
 	)
 }
 
+func TestRepositoryRevokeUserSessionsDoesNotApplyAccountStatusPolicy(t *testing.T) {
+	ctx, pool, repository := setupRepository(t)
+	now := time.Date(2026, time.July, 23, 11, 30, 0, 0, time.UTC)
+	primary := newUser(now)
+	disabled := newUser(now.Add(time.Minute))
+	disabled.Status = identity.UserDisabled
+	merged := newUser(now.Add(2 * time.Minute))
+	merged.Status = identity.UserMerged
+	merged.MergedInto = &primary.ID
+	users := []identity.User{primary, disabled, merged}
+	sessions := []identity.Session{
+		newSession(disabled.ID, identity.ClientWeb, now),
+		newSession(merged.ID, identity.ClientWeChatMini, now),
+	}
+
+	err := repository.WithinTx(ctx, func(tx identity.Tx) error {
+		for _, user := range users {
+			if err := tx.InsertUser(ctx, user); err != nil {
+				return err
+			}
+		}
+		for index, session := range sessions {
+			if err := tx.InsertSession(ctx, session); err != nil {
+				return err
+			}
+			if err := tx.InsertRefreshToken(ctx, newRefreshToken(session.ID, byte(30+index), now)); err != nil {
+				return err
+			}
+		}
+		for _, user := range []identity.User{disabled, merged} {
+			if err := tx.RevokeUserSessions(ctx, user.ID, now.Add(time.Minute), "policy_checked_by_service"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertSessionAndTokensRevoked(
+		t,
+		ctx,
+		pool,
+		[]uuid.UUID{sessions[0].ID, sessions[1].ID},
+		now.Add(time.Minute),
+		"policy_checked_by_service",
+	)
+}
+
 func TestRepositoryForUpdateAndStateErrors(t *testing.T) {
 	ctx, _, repository := setupRepository(t)
 	now := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
@@ -760,6 +848,218 @@ func TestRepositoryRefreshLockOrderDoesNotDeadlockRevokeUserSessions(t *testing.
 	close(continueRefresh)
 
 	assertConcurrentTransactionsComplete(t, refreshDone, revokeDone)
+}
+
+func TestRepositoryRevokeUserSessionsLocksUserBeforeSessions(t *testing.T) {
+	ctx, _, repository := setupRepository(t)
+	now := time.Date(2026, time.July, 23, 15, 0, 0, 0, time.UTC)
+	user := newUser(now)
+	session := newSession(user.ID, identity.ClientWeb, now)
+	token := newRefreshToken(session.ID, 24, now)
+	insertSessionsAndTokens(t, ctx, repository, user, []identity.Session{session}, []identity.RefreshTokenRecord{token})
+
+	userLocked := make(chan struct{})
+	releaseUser := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- repository.WithinTx(context.Background(), func(tx identity.Tx) error {
+			if _, err := tx.FindUser(context.Background(), user.ID, true); err != nil {
+				return err
+			}
+			close(userLocked)
+			<-releaseUser
+			return nil
+		})
+	}()
+	select {
+	case <-userLocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for user lock")
+	}
+
+	revokeDone := make(chan error, 1)
+	go func() {
+		revokeDone <- repository.WithinTx(context.Background(), func(tx identity.Tx) error {
+			if err := setFastTransactionTimeouts(context.Background(), tx); err != nil {
+				return err
+			}
+			return tx.RevokeUserSessions(context.Background(), user.ID, now.Add(time.Minute), "logout_all")
+		})
+	}()
+
+	select {
+	case err := <-revokeDone:
+		close(releaseUser)
+		if holderErr := <-holderDone; holderErr != nil {
+			t.Fatalf("user lock holder: %v", holderErr)
+		}
+		t.Fatalf("RevokeUserSessions completed while owning user was locked: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(releaseUser)
+	assertConcurrentTransactionsComplete(t, holderDone, revokeDone)
+}
+
+func TestRepositoryTwoDeviceLogoutAllLockOrderDoesNotDeadlock(t *testing.T) {
+	ctx, _, repository := setupRepository(t)
+	now := time.Date(2026, time.July, 23, 15, 30, 0, 0, time.UTC)
+	user := newUser(now)
+	sessions := []identity.Session{
+		newSession(user.ID, identity.ClientWeb, now),
+		newSession(user.ID, identity.ClientWeChatMini, now.Add(time.Minute)),
+	}
+	tokens := []identity.RefreshTokenRecord{
+		newRefreshToken(sessions[0].ID, 25, now),
+		newRefreshToken(sessions[1].ID, 26, now.Add(time.Minute)),
+	}
+	insertSessionsAndTokens(t, ctx, repository, user, sessions, tokens)
+
+	start := make(chan struct{})
+	results := make([]<-chan error, 0, len(sessions))
+	for _, principalSession := range sessions {
+		principalSession := principalSession
+		done := make(chan error, 1)
+		results = append(results, done)
+		go func() {
+			<-start
+			done <- repository.WithinTx(context.Background(), func(tx identity.Tx) error {
+				if err := setFastTransactionTimeouts(context.Background(), tx); err != nil {
+					return err
+				}
+				lockedUser, err := tx.FindUser(context.Background(), user.ID, true)
+				if err != nil {
+					return err
+				}
+				if lockedUser.Status != identity.UserActive {
+					return fmt.Errorf("locked user status = %s", lockedUser.Status)
+				}
+				lockedSession, err := tx.FindSession(context.Background(), principalSession.ID, true)
+				if err != nil {
+					return err
+				}
+				if lockedSession.UserID != lockedUser.ID {
+					return fmt.Errorf("principal session belongs to %s", lockedSession.UserID)
+				}
+				return tx.RevokeUserSessions(
+					context.Background(),
+					lockedUser.ID,
+					now.Add(2*time.Minute),
+					"logout_all",
+				)
+			})
+		}()
+	}
+	close(start)
+	assertConcurrentTransactionsComplete(t, results...)
+}
+
+func TestRepositoryCrossMergeLockOrderDoesNotDeadlock(t *testing.T) {
+	ctx, _, repository := setupRepository(t)
+	now := time.Date(2026, time.July, 23, 16, 0, 0, 0, time.UTC)
+	users := []identity.User{newUser(now), newUser(now.Add(time.Minute))}
+	identities := []identity.ExternalIdentity{
+		{
+			ID: uuid.New(), UserID: users[0].ID, Kind: identity.IdentityEmail,
+			Issuer: "email", Subject: "merge-a@example.com", VerifiedAt: now, CreatedAt: now,
+		},
+		{
+			ID: uuid.New(), UserID: users[1].ID, Kind: identity.IdentityWeChatMini,
+			Issuer: "wx-app-id", Subject: "merge-openid", VerifiedAt: now, CreatedAt: now,
+		},
+	}
+	sessions := []identity.Session{
+		newSession(users[0].ID, identity.ClientWeb, now),
+		newSession(users[1].ID, identity.ClientWeChatMini, now.Add(time.Minute)),
+	}
+	tokens := []identity.RefreshTokenRecord{
+		newRefreshToken(sessions[0].ID, 27, now),
+		newRefreshToken(sessions[1].ID, 28, now.Add(time.Minute)),
+	}
+	if err := repository.WithinTx(ctx, func(tx identity.Tx) error {
+		for _, user := range users {
+			if err := tx.InsertUser(ctx, user); err != nil {
+				return err
+			}
+		}
+		for _, external := range identities {
+			if err := tx.InsertIdentity(ctx, external); err != nil {
+				return err
+			}
+		}
+		for _, session := range sessions {
+			if err := tx.InsertSession(ctx, session); err != nil {
+				return err
+			}
+		}
+		for _, token := range tokens {
+			if err := tx.InsertRefreshToken(ctx, token); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	results := make([]<-chan error, 0, 2)
+	for index := range users {
+		index := index
+		done := make(chan error, 1)
+		results = append(results, done)
+		go func() {
+			<-start
+			done <- repository.WithinTx(context.Background(), func(tx identity.Tx) error {
+				if err := setFastTransactionTimeouts(context.Background(), tx); err != nil {
+					return err
+				}
+				orderedUsers := []uuid.UUID{users[0].ID, users[1].ID}
+				if bytes.Compare(orderedUsers[0][:], orderedUsers[1][:]) > 0 {
+					orderedUsers[0], orderedUsers[1] = orderedUsers[1], orderedUsers[0]
+				}
+				for _, userID := range orderedUsers {
+					if _, err := tx.FindUser(context.Background(), userID, true); err != nil {
+						return err
+					}
+				}
+
+				target := identities[1-index]
+				lockedIdentity, err := tx.FindIdentity(
+					context.Background(),
+					target.Kind,
+					target.Issuer,
+					target.Subject,
+					true,
+				)
+				if err != nil {
+					return err
+				}
+				if lockedIdentity.UserID != target.UserID {
+					return fmt.Errorf("identity owner changed to %s", lockedIdentity.UserID)
+				}
+				lockedSession, err := tx.FindSession(context.Background(), sessions[index].ID, true)
+				if err != nil {
+					return err
+				}
+				if lockedSession.UserID != users[index].ID {
+					return fmt.Errorf("principal session owner changed to %s", lockedSession.UserID)
+				}
+				for _, userID := range orderedUsers {
+					if err := tx.RevokeUserSessions(
+						context.Background(),
+						userID,
+						now.Add(3*time.Minute),
+						"account_merged",
+					); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		}()
+	}
+	close(start)
+	assertConcurrentTransactionsComplete(t, results...)
 }
 
 func setupRepository(t *testing.T) (context.Context, *pgxpool.Pool, identity.Repository) {
