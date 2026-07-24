@@ -113,7 +113,7 @@ Jobs 表已有 `(kind, business_key)` 唯一约束。调度器和人工重跑都
 
 - `id UUID`；
 - `category_id UUID NOT NULL`；
-- `name TEXT`、`slug TEXT UNIQUE`、`aliases TEXT[]`；
+- `name TEXT`、`slug TEXT UNIQUE`、`pinyin TEXT`、`aliases TEXT[]`；
 - `canonical_unit TEXT NOT NULL DEFAULT 'CNY/kg'`；
 - `active BOOLEAN`、`created_at`、`updated_at`。
 

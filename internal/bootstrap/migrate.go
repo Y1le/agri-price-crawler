@@ -8,6 +8,7 @@ import (
 	identitypostgres "github.com/Y1le/agri-price-crawler/internal/identity/postgres"
 	"github.com/Y1le/agri-price-crawler/internal/platform/config"
 	"github.com/Y1le/agri-price-crawler/internal/platform/migrate"
+	pricingpostgres "github.com/Y1le/agri-price-crawler/internal/pricing/postgres"
 )
 
 // RunMigrate opens PostgreSQL and applies every registered module migration.
@@ -28,6 +29,7 @@ func migrationSources() []migrate.Source {
 	return []migrate.Source{
 		migrate.PlatformSource(),
 		identitypostgres.Migrations(),
+		pricingpostgres.Migrations(),
 	}
 }
 

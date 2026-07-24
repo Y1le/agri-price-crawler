@@ -15,8 +15,8 @@ func TestRequiredSchemaVersionUsesMigrationCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 {
-		t.Fatalf("version = %d, want 3", version)
+	if version != 4 {
+		t.Fatalf("version = %d, want 4", version)
 	}
 }
 
