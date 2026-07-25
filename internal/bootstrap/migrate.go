@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	identitypostgres "github.com/Y1le/agri-price-crawler/internal/identity/postgres"
+	ingestionpostgres "github.com/Y1le/agri-price-crawler/internal/ingestion/postgres"
 	"github.com/Y1le/agri-price-crawler/internal/platform/config"
 	"github.com/Y1le/agri-price-crawler/internal/platform/migrate"
 	pricingpostgres "github.com/Y1le/agri-price-crawler/internal/pricing/postgres"
@@ -30,6 +31,7 @@ func migrationSources() []migrate.Source {
 		migrate.PlatformSource(),
 		identitypostgres.Migrations(),
 		pricingpostgres.Migrations(),
+		ingestionpostgres.Migrations(),
 	}
 }
 

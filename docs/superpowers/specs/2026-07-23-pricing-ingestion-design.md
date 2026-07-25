@@ -143,13 +143,17 @@ Jobs 表已有 `(kind, business_key)` 唯一约束。调度器和人工重跑都
 `ingestion_batches`
 
 - `id UUID PRIMARY KEY`；
-- `source_name TEXT`、`business_date DATE`；
-- `state TEXT CHECK ('running','failed','validated','published')`；
+- `source_name TEXT`、`business_date DATE`、`revision INTEGER NOT NULL DEFAULT 1`；
+- `origin TEXT CHECK ('scheduled','repair')`；
+- `state TEXT CHECK ('running','failed','validated','published','superseded')`；
 - `started_at`、`finished_at`、`published_at`；
 - `source_expected_count INT NULL`、`fetched_count INT`、`accepted_count INT`、`rejected_count INT`；
 - `failure_code TEXT NULL`、`failure_detail TEXT NULL`（仅安全分类，不保存凭据或响应正文）；
 - `published_by_job_id BIGINT NULL`；
-- 唯一约束 `(source_name, business_date)`。
+- `replaces_batch_id UUID NULL`、`repair_reason TEXT NULL`、`repaired_by TEXT NULL`；
+- 唯一约束 `(source_name, business_date, revision)`；同一 `(source_name, business_date)` 至多一个 `published` batch。
+
+定时任务仅使用 revision 1，且只能重试同一 running 或可恢复 failed batch。受控人工修复必须创建递增 revision、写入操作人和原因；发布修订时将旧 `published` batch 标记为 `superseded`。旧 batch、原始记录和 observation 永不删除，形成可追溯审计。
 
 `ingestion_raw_records`
 
@@ -251,7 +255,9 @@ Worker 使用 `Asia/Shanghai` 时区。每天 04:00 创建 `ingestion.huinong.fe
 4. upsert current snapshots；
 5. 标记 batch 为 `published` 并记录 `published_at`。
 
-任一步骤失败必须回滚。失败 batch 标记为 `failed`，保留上一个已发布快照。已发布 batch 不允许覆盖或再次发布；若必须修正数据，使用新的显式人工业务日期修复流程，该流程不在本期范围内。
+任一步骤失败必须回滚。失败 batch 标记为 `failed`，保留上一个已发布快照。定时任务绝不覆盖已发布 batch。
+
+受控 CLI 修复操作必须显式提供 source、business date、操作人和修复原因。它创建新的 revision；发布事务将同一日期的旧 batch 标记为 `superseded`，并以新 batch 的 summary 和 snapshot 覆盖公开当前值与趋势值。旧 observation 与 batch 审计永久保留，不提供公网修复 API。
 
 ## 6. Gateway API
 

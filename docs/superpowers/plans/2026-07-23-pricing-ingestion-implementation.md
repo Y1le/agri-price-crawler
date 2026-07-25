@@ -161,6 +161,7 @@ git commit -m "feat(pricing): add catalog and cursor repository"
 ```go
 type BatchRepository interface {
     Start(context.Context, source string, date BusinessDate, jobID int64) (Batch, bool, error)
+    StartRepair(context.Context, source string, date BusinessDate, RepairRequest) (Batch, error)
     AppendRaw(context.Context, batchID uuid.UUID, record RawRecord) error
     ListPending(context.Context, batchID uuid.UUID) ([]RawRecord, error)
     MarkRaw(context.Context, rawID int64, result ValidationResult) error
@@ -184,6 +185,7 @@ type PublishTx interface {
 ### Step 1：写领域状态机测试
 
 - 同一 `(source,business_date)` 并发 Start 返回同一 batch，只有一个创建者；
+- `StartRepair` 必须创建递增 revision，且要求非空操作人和修复原因；不能替换 running 或 validated 常规 batch；
 - running 才能 append，validated/published/failed 不能再追加；
 - raw key 相同且 hash 相同为幂等，hash 不同为永久 `duplicate_conflict`；
 - failure code 只能是稳定分类，不能存入原始 Source error；
@@ -198,7 +200,7 @@ type PublishTx interface {
 
 ### Step 3：实现迁移和 Repository
 
-- 建 `ingestion_batches`、`ingestion_raw_records`、映射表的结构与索引。
+- 建 `ingestion_batches`、`ingestion_raw_records`、映射表的结构与索引；批次唯一键为 `(source_name,business_date,revision)`，并以 partial unique index 保证每个 source/date 只有一个当前 `published` batch。
 - `Ingestion.Migrations()` 使用嵌入式模块目录；将其加入 `migrationSources()`，并更新 schema 版本测试。
 - `payload` 进入数据库前经过字段白名单/敏感字段剥离；调用方不能写 Secret、Authorization、Cookie、签名字段。
 - 错误映射区分 permanent 与 retryable，供 `jobs.Permanent` 使用。
@@ -314,6 +316,7 @@ git commit -m "feat(ingestion): fetch Huinong price records safely"
 ### Step 1：写发布事务失败测试
 
 - validated batch 发布后写 observation、summary、snapshot，并标记 published；
+- 受控 repair revision 发布后，将被替换的 published batch 标记为 `superseded`，并在同一事务内覆盖该日期的公开 summary 与 snapshot；旧 observation 必须仍可查询审计；
 - 同 batch 第二次发布是幂等成功，不产生重复行；
 - 任一 observation/summary/snapshot 写入失败时整个事务回滚，旧快照逐字不变；
 - 月边界自动确保正确 RANGE 分区，分区名称来自已验证 `business_date`；
@@ -373,6 +376,7 @@ git commit -m "feat(pricing): publish snapshots and daily trends"
 - batch 已 published 时直接返回成功；只有失败码明确为 retryable 的 batch 能由同一业务键重开为 running，永久失败不可自动复用；重开前必须确认不存在已发布记录，且 raw append 仍受 `(batch_id, source_record_key)` 幂等约束保护。
 - Handler 将错误分类转换为 `jobs.Permanent` 或普通 error。
 - `RegisterJobs` 将 `ingestion.huinong.fetch` 和 `ingestion.raw.prune` 注册到 Runner，不在 Handler 内部自行启动 goroutine。
+- 修复不经公网 HTTP：在 Task 8 提供 CLI，显式接收 source、business date、操作人和修复原因，调用 `StartRepair`。
 
 ### Step 3：验证并提交
 
@@ -391,6 +395,7 @@ git commit -m "feat(ingestion): run idempotent price publish jobs"
 
 - 新建：`internal/ingestion/schedule.go`
 - 新建：`internal/ingestion/schedule_test.go`
+- 新建：`cmd/ingestion-repair/main.go`
 - 修改：`internal/bootstrap/worker.go`
 - 修改：`internal/bootstrap/bootstrap_test.go`
 - 新建：`internal/bootstrap/pricing_ingestion_integration_test.go`
@@ -420,6 +425,7 @@ git commit -m "feat(ingestion): run idempotent price publish jobs"
 - Gateway 构造 Pricing Catalog/Reader 依赖（HTTP API 在 Task 9 挂载）；Worker 构造 Ingestion Repository、Publisher、Source、Service、Scheduler、Runner 注册。
 - 开发 Compose 默认禁用真实惠农网；测试使用 fixture Source；生产因配置缺失而失败启动，不静默访问真实服务。
 - Worker 和 Gateway 都只检查 migration version，不执行迁移。
+- repair CLI 复用同一 Bootstrap 构造与 Source 配置；缺 source、business date、操作人或原因即失败，永不开放 HTTP 管理端点。
 
 ### Step 4：验证并提交
 
