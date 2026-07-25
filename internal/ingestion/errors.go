@@ -10,4 +10,5 @@ var (
 	ErrInvalidFailureCode  = errors.New("invalid ingestion failure code")
 	ErrInvalidRepair       = errors.New("invalid ingestion repair request")
 	ErrRepairNotAllowed    = errors.New("ingestion repair is not allowed")
+	ErrPublicationNotReady = errors.New("ingestion batch is not publishable")
 )
